@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.figma.com)",
+      "Bash(npm install:*)",
+      "Bash(npx shadcn@latest add button input label select dialog toast badge card table tabs separator dropdown-menu avatar switch checkbox popover scroll-area tooltip alert-dialog sheet --yes)"
+    ]
+  }
+}
