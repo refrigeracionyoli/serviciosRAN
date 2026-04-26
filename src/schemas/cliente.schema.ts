@@ -1,23 +1,48 @@
 import { z } from 'zod'
 
+function getTodayIsoDate(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function isNotFutureIsoDate(value: string): boolean {
+  return value <= getTodayIsoDate()
+}
+
 const optionalNullableTelefono = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
   z.string().max(20).optional().nullable(),
 )
 
 const optionalNullableEmail = z.preprocess(
-  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
-  z.string().email({ message: 'Correo inválido' }).optional().nullable(),
+  (value) => {
+    if (typeof value !== 'string') return value
+    const normalized = value.trim()
+    return normalized === '' ? null : normalized
+  },
+  z
+    .string()
+    .email({ message: 'Ingresa un correo válido, por ejemplo supervisor@cliente.com' })
+    .optional()
+    .nullable(),
 )
 
 export const crearClienteSchema = z.object({
   codigo_cliente: z
     .string()
-    .min(1, { message: 'El código es requerido' })
-    .max(50),
+    .trim()
+    .min(1, { message: 'El código cliente es requerido' })
+    .max(50, { message: 'El código cliente no puede exceder 50 dígitos' })
+    .regex(/^\d+$/, { message: 'El código cliente solo acepta números' })
+    .refine((value) => value !== '0' && /[1-9]/.test(value), {
+      message: 'El código cliente debe ser un número positivo mayor a 0',
+    }),
   nombre: z
     .string()
-    .min(2, { message: 'El nombre debe tener al menos 2 caracteres' })
+    .min(1, { message: 'El nombre es requerido' })
     .max(200),
   direccion: z.string().max(500).optional().nullable(),
   municipio: z.string().max(100).optional().nullable(),
@@ -42,7 +67,16 @@ export const editarMaquinaSchema = crearMaquinaSchema.partial()
 
 export const cierreSchema = z.object({
   servicio_id: z.number().int().positive(),
-  aviso: z.number().int().positive().optional().nullable(),
+  aviso: z.preprocess(
+    (value) => (value === '' || value == null ? undefined : value),
+    z
+      .number({
+        required_error: 'Ingresa el aviso SAP',
+        invalid_type_error: 'Ingresa el aviso SAP',
+      })
+      .int({ message: 'El aviso SAP debe ser un número entero' })
+      .positive({ message: 'El aviso SAP debe ser mayor a 0' }),
+  ),
   parte_objeto: z.string().max(50).optional().nullable(),
   causa: z.string().max(50).optional().nullable(),
   descripcion: z
@@ -51,6 +85,11 @@ export const cierreSchema = z.object({
     .max(1000),
   costo_total: z.number().nonnegative().optional().nullable(),
   tecnico_id: z.string().uuid({ message: 'Selecciona un técnico' }),
+  fecha_cierre: z
+    .string()
+    .date('Fecha de cierre inválida')
+    .refine(isNotFutureIsoDate, { message: 'La fecha de cierre no puede ser futura' })
+    .optional(),
   firma_receptor: z.string().max(200).optional().nullable(),
 })
 

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { supabase } from '@/lib/supabase'
+import { getEdgeAuthHeaders } from '@/lib/edge-auth'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -26,15 +26,13 @@ export function ExportButton({
   const handleExport = async () => {
     setIsLoading(true)
     try {
-      const session = await supabase.auth.getSession()
-      const token = session.data.session?.access_token
-      if (!token) throw new Error('Sin sesión')
+      const authHeaders = await getEdgeAuthHeaders()
 
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
       const res = await fetch(`${supabaseUrl}/functions/v1/${endpoint}`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          ...authHeaders,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(payload),

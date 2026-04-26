@@ -4,8 +4,10 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
-function getSupabaseApiKey(): string {
-  return SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
+function getAuthApiKey(): string {
+  // Para validar JWT de usuario, ANON es la opción más estable.
+  // Si SERVICE_ROLE quedó rotada/desincronizada, usarla aquí rompe toda la auth de Edge Functions.
+  return SUPABASE_ANON_KEY || SUPABASE_SERVICE_ROLE_KEY
 }
 
 export type AppRole = 'admin' | 'tecnico'
@@ -15,8 +17,13 @@ export interface AuthContext {
   role: AppRole
 }
 
-function createAuthClient() {
-  const apiKey = getSupabaseApiKey()
+function resolveRequestApiKey(req: Request): string {
+  const requestApiKey = req.headers.get('apikey')?.trim()
+  if (requestApiKey) return requestApiKey
+  return getAuthApiKey()
+}
+
+function createAuthClient(apiKey: string) {
   if (!SUPABASE_URL || !apiKey) {
     throw new Response('Falta configuracion SUPABASE_URL y una API key de Supabase', { status: 500 })
   }
@@ -24,8 +31,7 @@ function createAuthClient() {
   return createClient(SUPABASE_URL, apiKey)
 }
 
-function createUserScopedClient(token: string) {
-  const apiKey = getSupabaseApiKey()
+function createUserScopedClient(token: string, apiKey: string) {
   if (!SUPABASE_URL || !apiKey) {
     throw new Response('Falta configuracion SUPABASE_URL y una API key de Supabase', { status: 500 })
   }
@@ -39,24 +45,30 @@ function createUserScopedClient(token: string) {
   })
 }
 
+async function resolveAuthenticatedUserId(token: string, apiKey: string): Promise<string> {
+  const supabase = createAuthClient(apiKey)
+  const { data, error } = await supabase.auth.getClaims(token)
+  const userId = data?.claims?.sub
+
+  if (error || !userId) {
+    throw new Response('Unauthorized', { status: 401 })
+  }
+
+  return userId
+}
+
 export async function requireAuth(req: Request): Promise<AuthContext> {
   const token = req.headers.get('Authorization')?.replace('Bearer ', '')
   if (!token) throw new Response('Unauthorized', { status: 401 })
 
-  const supabase = createAuthClient()
+  const apiKey = resolveRequestApiKey(req)
+  const userId = await resolveAuthenticatedUserId(token, apiKey)
 
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token)
-
-  if (error || !user) throw new Response('Unauthorized', { status: 401 })
-
-  const userClient = createUserScopedClient(token)
+  const userClient = createUserScopedClient(token, apiKey)
   const { data: profile, error: profileError } = await userClient
     .from('profiles')
     .select('role, activo')
-    .eq('id', user.id)
+    .eq('id', userId)
     .single()
 
   if (profileError) {
@@ -68,7 +80,7 @@ export async function requireAuth(req: Request): Promise<AuthContext> {
   if (!profile.activo) throw new Response('Account disabled', { status: 403 })
 
   return {
-    userId: user.id,
+    userId,
     role: profile.role as AppRole,
   }
 }

@@ -18,11 +18,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { LoadingSpinner } from './LoadingSpinner'
+import { AdminTableSkeleton } from './AdminSkeletons'
 import { EmptyState } from './EmptyState'
 
 interface DataTableProps<TData, TValue> {
-  columns: ColumnDef<TData, TValue>[]
+  columns: Array<ColumnDef<TData, TValue>>
   data: TData[]
   isLoading?: boolean
   emptyTitle?: string
@@ -53,8 +53,11 @@ export function DataTable<TData, TValue>({
 
   if (isLoading) {
     return (
-      <div className="flex h-48 items-center justify-center">
-        <LoadingSpinner size="lg" />
+      <div className="overflow-hidden rounded-lg border border-border bg-white p-4">
+        <AdminTableSkeleton
+          rows={Math.min(Math.max(pageSize, 5), 8)}
+          columns={Math.max(1, Math.min(columns.length, 6))}
+        />
       </div>
     )
   }

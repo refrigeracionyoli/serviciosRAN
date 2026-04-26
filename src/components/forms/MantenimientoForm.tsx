@@ -82,10 +82,11 @@ export function MantenimientoForm({
   const selectedPoliza = polizas.find((p) => p.id === polizaId)
 
   useEffect(() => {
-    if (!initialPolizaId || polizaId) return
+    if (!initialPolizaId) return
 
     const poliza = polizas.find((item) => item.id === initialPolizaId && item.activa)
     if (!poliza) return
+    if (polizaId === poliza.id) return
 
     setValue('poliza_id', poliza.id, { shouldValidate: true })
     setValue('cliente_id', poliza.cliente_id, { shouldValidate: true })

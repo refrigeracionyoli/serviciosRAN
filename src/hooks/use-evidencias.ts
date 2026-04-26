@@ -1,7 +1,27 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import imageCompression from 'browser-image-compression'
 import { supabase } from '@/lib/supabase'
-import { uploadEvidencia, getPresignedGetUrl, deleteEvidencia } from '@/lib/r2'
+import { deleteEvidencia, getPresignedGetUrl } from '@/lib/r2'
+import { useAuth } from '@/hooks/use-auth'
+import {
+  deleteCommand,
+  hasBlockingRemoteFetchCommands,
+  queueServiceAddEvidenciaCommand,
+  queueServiceDeleteEvidenciaCommand,
+} from '@/lib/offline/commands'
+import {
+  getCachedEvidenciasByServicio,
+  getCachedServicioDetalleSnapshot,
+  isLocalNumberId,
+  getLocalAttachmentUrl,
+  removeCachedEvidencia,
+  removePendingLocalEvidencia,
+  replaceCachedEvidenciasForServicio,
+} from '@/lib/offline/cache'
+import { withOfflineFallback } from '@/lib/offline/query-fallback'
+import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
+import { getCurrentSessionUser } from '@/lib/offline/session'
+import { settleQueuedCommand } from '@/lib/offline/sync-engine'
 import type { Evidencia } from '@/types/domain.types'
 
 interface PerfilCompresion {
@@ -28,6 +48,16 @@ const PERFIL_ORDEN_SERVICIO: PerfilCompresion = {
   limiteSuaveBytes: 300 * 1024,
 }
 
+export interface QueuedEvidenceResult {
+  commandId: string
+  syncStatus: 'pending' | 'synced' | 'failed' | 'conflict'
+  ownerId: string
+}
+
+interface DeleteEvidenciaContext {
+  previousEvidencias?: Evidencia[]
+}
+
 function isOrdenServicioUpload(filename: string): boolean {
   return filename.startsWith('orden-servicio__')
 }
@@ -51,7 +81,6 @@ async function comprimirParaR2(file: File, esOrdenServicio: boolean): Promise<Fi
 
     let candidato = buildCompressedFile(primeraPasada, file.name)
 
-    // Segunda pasada opcional para exprimir más espacio cuando sigue pesado.
     if (candidato.size > perfil.limiteSuaveBytes) {
       const segundaPasada = await imageCompression(candidato, {
         maxSizeMB: Math.max(perfil.objetivoMB * 0.75, 0.2),
@@ -70,7 +99,6 @@ async function comprimirParaR2(file: File, esOrdenServicio: boolean): Promise<Fi
 
     return candidato.size < file.size ? candidato : file
   } catch {
-    // Si falla la compresión por formato no soportado, subimos original para no romper flujo.
     return file
   }
 }
@@ -80,101 +108,239 @@ export const evidenciasKeys = {
   byServicio: (servicioId: number) => ['evidencias', 'servicio', servicioId] as const,
 }
 
+async function hydrateEvidenciasQueryCache(ownerId: string, servicioId: number, queryClient: QueryClient) {
+  queryClient.setQueryData(
+    evidenciasKeys.byServicio(servicioId),
+    await getCachedEvidenciasByServicio(ownerId, servicioId),
+  )
+}
+
+async function doesRemoteEvidenceExist(evidenciaId: number): Promise<boolean | null> {
+  const { data, error } = await supabase
+    .from('evidencias')
+    .select('id')
+    .eq('id', evidenciaId)
+    .maybeSingle()
+
+  if (error) {
+    if (isLikelyNetworkError(error)) {
+      return null
+    }
+
+    throw new Error(`No se pudo validar la eliminación de la evidencia: ${error.message}`)
+  }
+
+  return Boolean(data)
+}
+
+async function assertServicioAllowsEvidenceChanges(ownerId: string, servicioId: number) {
+  const servicio = await getCachedServicioDetalleSnapshot(ownerId, servicioId)
+  if (servicio?.status === 'cerrado') {
+    throw new Error('Este servicio ya fue cerrado y sus evidencias quedaron bloqueadas.')
+  }
+}
+
 export function useEvidenciasQuery(servicioId: number, enabled = true) {
   return useQuery({
     queryKey: evidenciasKeys.byServicio(servicioId),
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnReconnect: true,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('evidencias')
-        .select('*')
-        .eq('servicio_id', servicioId)
-        .order('orden')
-      if (error) throw error
-      return data as Evidencia[]
+      const currentUser = await getCurrentSessionUser()
+      if (!currentUser) return []
+
+      const shouldUseLocalOnly = isLocalNumberId(servicioId) || await hasBlockingRemoteFetchCommands(
+        currentUser.id,
+        ['servicio.create', 'service.add_evidencia', 'service.delete_evidencia'],
+        { entityId: servicioId },
+      )
+
+      if (shouldUseLocalOnly) {
+        return getCachedEvidenciasByServicio(currentUser.id, servicioId)
+      }
+
+      return withOfflineFallback({
+        remote: async () => {
+          const { data, error } = await supabase
+            .from('evidencias')
+            .select('*')
+            .eq('servicio_id', servicioId)
+            .order('orden')
+          if (error) throw error
+
+          await replaceCachedEvidenciasForServicio(currentUser.id, servicioId, data as Evidencia[])
+          return getCachedEvidenciasByServicio(currentUser.id, servicioId)
+        },
+        local: () => getCachedEvidenciasByServicio(currentUser.id, servicioId),
+      })
     },
     enabled: enabled && servicioId > 0,
   })
 }
 
-/** Sube un archivo de evidencia: comprime → Edge Function → R2 → registra en DB */
 export function useSubirEvidenciaMutation(servicioId: number) {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (file: File) => {
-      const getUserId = async (): Promise<string> => {
-        const { data, error } = await supabase.auth.getUser()
-        if (error || !data.user) throw new Error('No hay sesión activa')
-        return data.user.id
+    mutationFn: async (file: File): Promise<QueuedEvidenceResult> => {
+      const currentUser = await getCurrentSessionUser()
+      if (!currentUser) {
+        throw new Error('No hay sesión activa para registrar la evidencia.')
       }
 
-      let userId: string
-      try {
-        userId = await getUserId()
-      } catch {
-        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession()
-        if (refreshError || !refreshed.session) {
-          throw new Error('No hay sesión activa para registrar la evidencia')
-        }
-        userId = await getUserId()
+      if (servicioId <= 0) {
+        throw new Error('Guarda primero el servicio antes de cargar evidencias.')
       }
 
-      // 1. Comprimir imagen
+      await assertServicioAllowsEvidenceChanges(currentUser.id, servicioId)
+
       const uploadFile = await comprimirParaR2(file, isOrdenServicioUpload(file.name))
+      const command = await queueServiceAddEvidenciaCommand(currentUser.id, {
+        serviceId: servicioId,
+        file: uploadFile,
+        subidaPor: currentUser.id,
+      })
 
-      // 2. Subir a R2 vía Edge Function (sin CORS)
-      const { r2Key } = await uploadEvidencia(servicioId, uploadFile)
+      const syncStatus: QueuedEvidenceResult['syncStatus'] = isBrowserOnline()
+        ? await settleQueuedCommand(command.id)
+        : 'pending'
 
-      // 3. Registrar en DB
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.from('evidencias') as any)
-        .insert({
-          servicio_id: servicioId,
-          r2_key: r2Key,
-          r2_bucket: 'ran-evidencias',
-          filename: file.name,
-          mime_type: uploadFile.type,
-          size_bytes: uploadFile.size,
-          orden: 1,
-          subida_por: userId,
-        })
-        .select()
-        .single()
-
-      if (error) throw new Error(`Error al registrar evidencia: ${error.message}`)
-      if (!data) throw new Error('Error al registrar evidencia: respuesta vacía')
-
-      return data as Evidencia
+      return {
+        commandId: command.id,
+        syncStatus,
+        ownerId: currentUser.id,
+      }
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: evidenciasKeys.byServicio(servicioId) })
+    onSuccess: async (result) => {
+      await hydrateEvidenciasQueryCache(result.ownerId, servicioId, queryClient)
     },
   })
 }
 
-/** Elimina una evidencia del servicio */
 export function useEliminarEvidenciaMutation(servicioId: number) {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient()
+  const { user, perfil } = useAuth()
 
   return useMutation({
-    mutationFn: async (evidenciaId: number) => {
-      await deleteEvidencia(evidenciaId)
+    onMutate: async (evidenciaId): Promise<DeleteEvidenciaContext> => {
+      await queryClient.cancelQueries({ queryKey: evidenciasKeys.byServicio(servicioId) })
 
+      const previousEvidencias = queryClient.getQueryData<Evidencia[]>(evidenciasKeys.byServicio(servicioId))
+
+      queryClient.setQueryData<Evidencia[]>(
+        evidenciasKeys.byServicio(servicioId),
+        (current = []) => current.filter((evidencia) => evidencia.id !== evidenciaId),
+      )
+
+      return { previousEvidencias }
+    },
+    mutationFn: async (evidenciaId: number) => {
+      if (!user?.id) {
+        throw new Error('No hay sesión activa para eliminar la evidencia.')
+      }
+
+      await assertServicioAllowsEvidenceChanges(user.id, servicioId)
+
+      if (evidenciaId < 0) {
+        const commandId = await removePendingLocalEvidencia(user.id, evidenciaId)
+        if (commandId) {
+          await deleteCommand(commandId)
+        }
+        return evidenciaId
+      }
+
+      if (isBrowserOnline()) {
+        try {
+          await deleteEvidencia(evidenciaId)
+
+          const stillExists = await doesRemoteEvidenceExist(evidenciaId)
+          if (stillExists) {
+            const { error: directDeleteError } = await supabase
+              .from('evidencias')
+              .delete()
+              .eq('id', evidenciaId)
+
+            if (directDeleteError && !isLikelyNetworkError(directDeleteError)) {
+              throw new Error(`No se pudo eliminar el registro de la evidencia: ${directDeleteError.message}`)
+            }
+
+            const existsAfterFallback = await doesRemoteEvidenceExist(evidenciaId)
+            if (existsAfterFallback) {
+              throw new Error(
+                perfil?.role === 'tecnico'
+                  ? 'La imagen se eliminó del almacenamiento, pero el registro sigue existiendo en la base de datos. Aplica la migración 018_tecnico_delete_evidencias.sql o despliega la Edge Function r2-delete actualizada.'
+                  : 'La imagen se eliminó del almacenamiento, pero el registro sigue existiendo en la base de datos.',
+              )
+            }
+          }
+
+          return evidenciaId
+        } catch (error) {
+          if (error instanceof Error) {
+            const text = error.message.toLowerCase()
+            if (text.includes('404') || text.includes('no encontrada') || text.includes('not found')) {
+              return evidenciaId
+            }
+          }
+
+          if (!isLikelyNetworkError(error)) throw error
+        }
+      }
+
+      await queueServiceDeleteEvidenciaCommand(user.id, {
+        serviceId: servicioId,
+        evidenciaId,
+      })
       return evidenciaId
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: evidenciasKeys.byServicio(servicioId) })
+    onError: (_error, _evidenciaId, context) => {
+      if (context?.previousEvidencias) {
+        queryClient.setQueryData(evidenciasKeys.byServicio(servicioId), context.previousEvidencias)
+      }
+    },
+    onSuccess: async (deletedEvidenceId) => {
+      if (user?.id) {
+        if (deletedEvidenceId > 0) {
+          await removeCachedEvidencia(user.id, deletedEvidenceId)
+        }
+        await hydrateEvidenciasQueryCache(user.id, servicioId, queryClient)
+      }
     },
   })
 }
 
-/** Obtiene presigned GET URL para una evidencia */
 export function useEvidenciaUrlQuery(r2Key: string | null) {
+  const { isAuthenticated, user } = useAuth()
+
   return useQuery({
-    queryKey: ['evidencias', 'url', r2Key],
-    queryFn: () => getPresignedGetUrl(r2Key!),
-    enabled: !!r2Key,
+    queryKey: ['evidencias', 'url', user?.id ?? null, r2Key],
+    queryFn: async () => {
+      if (!user?.id) {
+        return { downloadUrl: '' }
+      }
+
+      const localUrl = await getLocalAttachmentUrl(user.id, r2Key)
+      if (localUrl) {
+        return { downloadUrl: localUrl }
+      }
+
+      if (!isBrowserOnline()) {
+        return { downloadUrl: '' }
+      }
+
+      try {
+        return await getPresignedGetUrl(r2Key!)
+      } catch (error) {
+        if (isLikelyNetworkError(error)) {
+          return { downloadUrl: '' }
+        }
+        throw error
+      }
+    },
+    enabled: Boolean(r2Key) && (isAuthenticated || Boolean(user?.id)),
     staleTime: 1000 * 60 * 50,
     gcTime: 1000 * 60 * 55,
+    retry: false,
   })
 }

@@ -19,6 +19,7 @@ interface Props {
   clearLabel?: string
   disabled?: boolean
   className?: string
+  contentClassName?: string
 }
 
 function normalizeValue(value: string): string {
@@ -35,6 +36,7 @@ export function CreatableCombobox({
   clearLabel = 'Sin especificar',
   disabled,
   className,
+  contentClassName,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -112,7 +114,10 @@ export function CreatableCombobox({
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-2" align="start">
+      <PopoverContent
+        className={cn('w-[var(--radix-popover-trigger-width)] p-2', contentClassName)}
+        align="start"
+      >
         <Input
           value={search}
           onChange={(event) => setSearch(event.target.value)}
@@ -191,8 +196,8 @@ export function CreatableCombobox({
                 key={option}
                 type="button"
                 onClick={() => handleSelect(option)}
-                className={cn(
-                  'flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-ran-ice',
+              className={cn(
+                  'flex w-full items-start gap-2 rounded px-3 py-2 text-left text-sm hover:bg-ran-ice',
                   isSelected && 'bg-ran-ice',
                 )}
               >
@@ -202,7 +207,7 @@ export function CreatableCombobox({
                     isSelected ? 'text-ran-navy opacity-100' : 'opacity-0',
                   )}
                 />
-                <span className="truncate">{option}</span>
+                <span className="flex-1 break-words text-left leading-snug">{option}</span>
               </button>
             )
           })}

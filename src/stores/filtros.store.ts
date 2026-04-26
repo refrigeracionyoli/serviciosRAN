@@ -9,9 +9,12 @@ interface FiltrosState {
   fechaHasta: string | null
   tipoServicio: TipoServicio | null
   search: string | null
-  setFiltro: <K extends keyof Omit<FiltrosState, 'setFiltro' | 'resetFiltros'>>(
+  setFiltro: <K extends keyof Omit<FiltrosState, 'setFiltro' | 'setFiltros' | 'resetFiltros'>>(
     key: K,
     value: FiltrosState[K],
+  ) => void
+  setFiltros: (
+    patch: Partial<Pick<FiltrosState, 'status' | 'tecnicoId' | 'clienteId' | 'fechaDesde' | 'fechaHasta' | 'tipoServicio' | 'search'>>,
   ) => void
   resetFiltros: () => void
 }
@@ -29,5 +32,6 @@ const initialState = {
 export const useFiltrosStore = create<FiltrosState>()((set) => ({
   ...initialState,
   setFiltro: (key, value) => set({ [key]: value }),
+  setFiltros: (patch) => set(patch),
   resetFiltros: () => set(initialState),
 }))

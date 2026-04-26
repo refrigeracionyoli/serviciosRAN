@@ -5,19 +5,25 @@ import {
   FileCheck2,
   Package,
   Wrench,
-  BarChart3,
   Settings,
   ChevronLeft,
   ChevronRight,
-  Menu,
   LogOut,
   Users,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { ProfileSettingsPanel } from '@/components/profile/ProfileSettingsPanel'
 import { cn } from '@/lib/utils'
 import { useSidebarStore } from '@/stores/sidebar.store'
 import { useSignOut, useAuth } from '@/hooks/use-auth'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
 
@@ -34,7 +40,6 @@ const navItems: NavItem[] = [
   { to: '/polizas', label: 'Pólizas', icon: FileCheck2 },
   { to: '/inventario', label: 'Inventario', icon: Package },
   { to: '/maquinas-taller', label: 'Taller', icon: Wrench },
-  { to: '/reportes/semanal', label: 'Reportes', icon: BarChart3 },
   { to: '/catalogos', label: 'Catálogos', icon: Settings },
 ]
 
@@ -81,10 +86,12 @@ export function Sidebar() {
   const latestWidthRef = useRef(width)
   const [liveWidth, setLiveWidth] = useState(width)
   const [isResizing, setIsResizing] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
 
   const MIN_WIDTH = 220
   const MAX_WIDTH = 360
   const COLLAPSED_WIDTH = 74
+  const toggleLabel = collapsed ? 'Expandir menú' : 'Colapsar menú'
 
   useEffect(() => {
     if (!isResizing) {
@@ -130,46 +137,30 @@ export function Sidebar() {
       style={{ width: collapsed ? COLLAPSED_WIDTH : liveWidth }}
     >
       {/* Logo / Header */}
-      <div
-        className={cn(
-          'border-b border-slate-100',
-          collapsed ? 'px-0 py-2' : 'flex h-16 items-center justify-between px-3',
-        )}
-      >
-        {!collapsed && (
-          <>
-            <div className="flex min-w-0 items-center gap-2">
-              <img src="/icons/Ran_logo.png" alt="RAN Refrigeracion" className="h-8 w-8 shrink-0 rounded-md object-cover" />
-              <p className="truncate text-sm font-bold leading-none text-slate-900">Servicios RAN</p>
-            </div>
+      <div className="relative flex h-16 items-center border-b border-slate-100 px-3">
+        <div className={cn('flex min-w-0 items-center gap-2', collapsed ? 'mx-auto' : 'pr-8')}>
+          <img src="/icons/Ran_logo.png" alt="RAN Refrigeracion" className="h-8 w-8 shrink-0 rounded-md object-cover" />
+          {!collapsed && <p className="truncate text-sm font-bold leading-none text-slate-900">Servicios RAN</p>}
+        </div>
 
+        <Tooltip>
+          <TooltipTrigger asChild>
             <Button
-              variant="ghost"
-              size="sm"
+              type="button"
+              variant="outline"
+              size="icon"
               onClick={toggle}
-              className="h-7 w-7 p-0"
-              title="Colapsar menú"
+              aria-label={toggleLabel}
+              className={cn(
+                'absolute right-0 top-1/2 z-30 h-8 w-8 -translate-y-1/2 translate-x-1/2 rounded-full border-slate-200 bg-white text-slate-500 shadow-sm',
+                'hover:bg-slate-50 hover:text-ran-navy',
+              )}
             >
-              <ChevronLeft className="h-4 w-4" />
+              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
             </Button>
-          </>
-        )}
-
-        {collapsed && (
-          <div className="flex flex-col items-center gap-2">
-            <img src="/icons/Ran_logo.png" alt="RAN" className="h-8 w-8 rounded-md object-cover" />
-
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggle}
-              className="h-7 w-7 p-0"
-              title="Expandir menú"
-            >
-              <Menu className="h-4 w-4" />
-            </Button>
-          </div>
-        )}
+          </TooltipTrigger>
+          <TooltipContent side="right">{toggleLabel}</TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Navigation */}
@@ -184,7 +175,11 @@ export function Sidebar() {
       {/* Footer: user + toggle + logout */}
       <div className="space-y-1 p-2">
         {!collapsed && perfil && (
-          <div className="flex items-center gap-2 rounded-lg px-2 py-2">
+          <button
+            type="button"
+            onClick={() => setProfileOpen(true)}
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors hover:bg-slate-100"
+          >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-ran-navy font-semibold text-sm">
               {perfil.nombre.charAt(0).toUpperCase()}
             </div>
@@ -192,7 +187,26 @@ export function Sidebar() {
               <p className="truncate text-sm font-semibold text-slate-800">{perfil.nombre}</p>
               <p className="truncate text-xs capitalize text-slate-500">{perfil.role}</p>
             </div>
-          </div>
+          </button>
+        )}
+
+        {collapsed && perfil && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setProfileOpen(true)}
+                className="h-11 w-full justify-center rounded-xl px-0"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-sm font-semibold text-ran-navy">
+                  {perfil.nombre.charAt(0).toUpperCase()}
+                </div>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Mi perfil</TooltipContent>
+          </Tooltip>
         )}
 
         <Tooltip>
@@ -221,11 +235,26 @@ export function Sidebar() {
           title="Redimensionar menú"
         />
       )}
+
+      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
+        <DialogContent className="max-h-[85vh] overflow-hidden p-0 sm:max-w-2xl">
+          <DialogHeader className="border-b border-slate-200 px-6 py-5">
+            <DialogTitle className="text-ran-navy">Mi perfil</DialogTitle>
+            <DialogDescription>
+              Administra tu información general y la seguridad de tu cuenta.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[calc(85vh-88px)] overflow-y-auto px-6 py-5">
+            <ProfileSettingsPanel variant="dialog" />
+          </div>
+        </DialogContent>
+      </Dialog>
     </aside>
   )
 }
 
-export function SidebarSubNav({ items }: { items: { to: string; label: string; icon?: React.ElementType }[] }) {
+export function SidebarSubNav({ items }: { items: Array<{ to: string; label: string; icon?: React.ElementType }> }) {
   return (
     <nav className="flex gap-1 border-b border-border px-6 pt-1">
       {items.map((item) => (
@@ -250,5 +279,5 @@ export function SidebarSubNav({ items }: { items: { to: string; label: string; i
   )
 }
 
-// Re-exportaciones para catálogos y reportes
+// Re-exportación para catálogos
 export { Users }

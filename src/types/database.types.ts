@@ -26,7 +26,6 @@ export interface Database {
           correo: string
           telefono: string | null
           role: 'admin' | 'tecnico'
-          especialidad: string | null
           activo: boolean
           created_at: string
           updated_at: string
@@ -53,7 +52,7 @@ export interface Database {
         Row: {
           id: number
           serie: string
-          modelo: 'KM901' | 'MS1500' | 'SD1002' | 'KM1300'
+          modelo: string
           cliente_id: number | null
           fecha_instalacion: string | null
           status: 'operando' | 'en_taller' | 'baja'
@@ -77,6 +76,7 @@ export interface Database {
           descripcion: string | null
           fecha_solicitud: string | null
           fecha_servicio: string | null
+          fecha_cierre: string | null
           status: 'pendiente' | 'en_ruta' | 'completado' | 'cerrado'
           costo_refacciones: number
           costo_mano_obra: number
@@ -86,8 +86,10 @@ export interface Database {
         }
         Insert: Omit<
           Database['public']['Tables']['servicios']['Row'],
-          'id' | 'total' | 'created_at' | 'updated_at'
-        >
+          'id' | 'total' | 'created_at' | 'updated_at' | 'fecha_cierre'
+        > & {
+          fecha_cierre?: string | null
+        }
         Update: Partial<Database['public']['Tables']['servicios']['Insert']>
       }
       cierres: {
@@ -133,6 +135,27 @@ export interface Database {
           'id' | 'changed_at'
         >
         Update: Partial<Database['public']['Tables']['poliza_estado_historial']['Insert']>
+      }
+      poliza_pausas: {
+        Row: {
+          id: number
+          fecha_inicio: string
+          fecha_reanudacion: string | null
+          motivo: string | null
+          created_at: string
+          created_by: string | null
+          resumed_at: string | null
+          resumed_by: string | null
+        }
+        Insert: {
+          fecha_inicio: string
+          fecha_reanudacion?: string | null
+          motivo?: string | null
+          created_by?: string | null
+          resumed_at?: string | null
+          resumed_by?: string | null
+        }
+        Update: Partial<Database['public']['Tables']['poliza_pausas']['Insert']>
       }
       mantenimientos_poliza: {
         Row: {
@@ -181,6 +204,7 @@ export interface Database {
           cantidad: number
           precio_unitario: number
           subtotal: number
+          inventory_source: 'general' | 'tecnico'
         }
         Insert: Omit<Database['public']['Tables']['servicio_refacciones']['Row'], 'id' | 'subtotal'>
         Update: Partial<Database['public']['Tables']['servicio_refacciones']['Insert']>
@@ -191,8 +215,11 @@ export interface Database {
           tecnico_id: string
           inventario_id: number
           cantidad: number
+          cantidad_asignada_total: number
           fecha: string
           created_at: string
+          devuelto_at: string | null
+          devuelto_automaticamente: boolean
         }
         Insert: Omit<Database['public']['Tables']['inventario_tecnico']['Row'], 'id' | 'created_at'>
         Update: Partial<Database['public']['Tables']['inventario_tecnico']['Insert']>
@@ -201,7 +228,15 @@ export interface Database {
         Row: {
           id: number
           inventario_id: number
-          tipo: 'entrada' | 'salida' | 'ajuste'
+          tipo:
+            | 'entrada'
+            | 'salida'
+            | 'ajuste'
+            | 'alta_inventario'
+            | 'asignacion_tecnico'
+            | 'devolucion_tecnico'
+            | 'instalacion_refaccion'
+            | 'correccion_instalacion'
           cantidad: number
           motivo: string | null
           referencia_id: number | null

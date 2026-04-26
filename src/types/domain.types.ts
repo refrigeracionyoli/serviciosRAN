@@ -14,7 +14,7 @@ export type TipoServicio =
   | 'RETIRO'
   | 'GARANTIA'
 
-export type ModeloMaquina = 'KM901' | 'MS1500' | 'SD1002' | 'KM1300'
+export type ModeloMaquina = string
 
 export type MaquinaStatus = 'operando' | 'en_taller' | 'baja'
 
@@ -22,7 +22,16 @@ export type ClaseOrden = 'ZSM1' | 'ZSI2'
 
 export type MantenimientoStatus = 'pendiente' | 'en_ruta' | 'realizado'
 
-export type MovimientoTipo = 'entrada' | 'salida' | 'ajuste'
+export type MovimientoTipo =
+  | 'entrada'
+  | 'salida'
+  | 'ajuste'
+  | 'alta_inventario'
+  | 'asignacion_tecnico'
+  | 'devolucion_tecnico'
+  | 'instalacion_refaccion'
+  | 'correccion_instalacion'
+export type RefaccionInventorySource = 'general' | 'tecnico'
 
 export type MaquinaTallerMovimientoAccion = 'entrada' | 'salida' | 'reubicacion' | 'nota'
 
@@ -38,7 +47,6 @@ export interface Profile {
   correo: string
   telefono: string | null
   role: UserRole
-  especialidad: string | null
   activo: boolean
   created_at: string
   updated_at: string
@@ -82,6 +90,7 @@ export interface Servicio {
   descripcion: string | null
   fecha_solicitud: string | null
   fecha_servicio: string | null
+  fecha_cierre: string | null
   status: ServicioStatus
   costo_refacciones: number
   costo_mano_obra: number
@@ -134,6 +143,17 @@ export interface PolizaEstadoHistorial {
   motivo: string | null
 }
 
+export interface PolizaPausa {
+  id: number
+  fecha_inicio: string
+  fecha_reanudacion: string | null
+  motivo: string | null
+  created_at: string
+  created_by: string | null
+  resumed_at: string | null
+  resumed_by: string | null
+}
+
 export interface MantenimientoPoliza {
   id: number
   poliza_id: number
@@ -176,6 +196,7 @@ export interface ServicioRefaccion {
   cantidad: number
   precio_unitario: number
   subtotal: number
+  inventory_source: RefaccionInventorySource
 }
 
 export interface InventarioTecnico {
@@ -183,8 +204,11 @@ export interface InventarioTecnico {
   tecnico_id: string
   inventario_id: number
   cantidad: number
+  cantidad_asignada_total: number
   fecha: string
   created_at: string
+  devuelto_at: string | null
+  devuelto_automaticamente: boolean
   // relaciones
   tecnico?: Profile
   item?: ItemInventario

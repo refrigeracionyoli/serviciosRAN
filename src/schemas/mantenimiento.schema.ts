@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 const fechaVisitaSchema = z.preprocess(
   (value) => (value === '' || value === undefined ? null : value),
-  z.string().date({ message: 'Fecha de visita inválida' }).nullable(),
+  z.string().date('Fecha de visita inválida').nullable(),
 )
 
 const mantenimientoSchemaBase = z.object({

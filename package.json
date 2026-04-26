@@ -6,10 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "supabase:bootstrap": "node ./node_modules/supabase/scripts/postinstall.js",
-    "supabase:functions:deploy:r2": "supabase functions deploy r2-presigned-put --project-ref ybrfrixfewarnderdsqi && supabase functions deploy r2-presigned-get --project-ref ybrfrixfewarnderdsqi && supabase functions deploy r2-delete --project-ref ybrfrixfewarnderdsqi"
+    "supabase:bootstrap": "cd ./node_modules/supabase && node scripts/postinstall.js",
+    "supabase:functions:deploy:r2": "supabase functions deploy r2-upload --no-verify-jwt --project-ref ybrfrixfewarnderdsqi && supabase functions deploy r2-presigned-put --no-verify-jwt --project-ref ybrfrixfewarnderdsqi && supabase functions deploy r2-presigned-get --no-verify-jwt --project-ref ybrfrixfewarnderdsqi && supabase functions deploy r2-delete --no-verify-jwt --project-ref ybrfrixfewarnderdsqi",
+    "supabase:functions:deploy:admin-create-tecnico": "supabase functions deploy admin-create-tecnico --no-verify-jwt --project-ref ybrfrixfewarnderdsqi",
+    "supabase:functions:deploy:admin-reset-empleado-password": "supabase functions deploy admin-reset-empleado-password --no-verify-jwt --project-ref ybrfrixfewarnderdsqi",
+    "supabase:functions:deploy:admin": "supabase functions deploy admin-create-tecnico --no-verify-jwt --project-ref ybrfrixfewarnderdsqi && supabase functions deploy admin-reset-empleado-password --no-verify-jwt --project-ref ybrfrixfewarnderdsqi"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -38,12 +43,14 @@
     "date-fns": "^3.6.0",
     "dexie": "^4.0.9",
     "dexie-react-hooks": "^1.1.7",
+    "exceljs": "^4.4.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.54.2",
     "react-router-dom": "^6.28.1",
+    "recharts": "^3.8.1",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
     "xlsx": "^0.18.5",
@@ -51,14 +58,20 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.5.0",
     "postcss": "^8.4.49",
     "supabase": "^2.84.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.59.0",
     "vite": "^6.0.5",
     "vite-plugin-pwa": "^0.21.1",
     "workbox-window": "^7.3.0"

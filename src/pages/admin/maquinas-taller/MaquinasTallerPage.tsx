@@ -1,8 +1,12 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Clock3, Factory, History, Plus, Search, Wrench } from 'lucide-react'
+import {
+  AdminCardListSkeleton,
+  AdminStatsGridSkeleton,
+} from '@/components/shared/AdminSkeletons'
+import { DatePickerInput } from '@/components/shared/DatePickerInput'
 import { PageHeader } from '@/components/shared/PageHeader'
-import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,19 +25,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useToast } from '@/hooks/use-toast'
 import { useClientesQuery } from '@/hooks/use-clientes'
-import { useMaquinasQuery } from '@/hooks/use-maquinas'
+import { useCrearMaquinaMutation, useMaquinasQuery } from '@/hooks/use-maquinas'
 import {
+  type ServicioTallerOption,
   useMaquinaTallerMovimientosQuery,
   useMaquinasEnTallerQuery,
   useRegistrarEntradaTallerMutation,
+  useRegistrarSalidaTallerMutation,
+  useServiciosTallerQuery,
 } from '@/hooks/use-maquinas-taller'
 import { cn, formatDate } from '@/lib/utils'
 import type { MaquinaEnTaller, MaquinaTallerMovimiento } from '@/types/domain.types'
 
-type FiltroLista = 'abiertas' | 'cerradas' | 'todas'
+type FiltroLista = 'en_taller' | 'instalacion' | 'urban' | 'cerradas_otras' | 'todas'
 type MotivoIngreso = 'instalacion' | 'manual'
+type RegistroCategoria = 'en_taller' | 'instalacion' | 'urban' | 'cerradas_otras'
+
+interface SalidaTallerResumen {
+  id: number
+  maquina_taller_id: number | null
+  motivo: string
+  destino: string | null
+  fecha_movimiento: string
+  created_at: string
+}
 
 function formatLocalIsoDate(date: Date): string {
   const year = date.getFullYear()
@@ -54,14 +72,42 @@ function includesNormalized(value: string | null | undefined, needle: string): b
   return value.toLowerCase().includes(needle)
 }
 
-function getRegistroEstadoLabel(registro: MaquinaEnTaller): string {
-  return registro.fecha_salida ? 'Cerrado' : 'En taller'
+function normalizeLower(value: string | null | undefined): string {
+  return value?.toLowerCase().trim() ?? ''
 }
 
-function getRegistroEstadoClass(registro: MaquinaEnTaller): string {
-  return registro.fecha_salida
-    ? 'border-slate-200 bg-slate-100 text-slate-700'
-    : 'border-blue-200 bg-blue-100 text-blue-800'
+function getRegistroCategoria(registro: MaquinaEnTaller, salida?: SalidaTallerResumen): RegistroCategoria {
+  if (!registro.fecha_salida) return 'en_taller'
+
+  const motivo = normalizeLower(salida?.motivo)
+  const destino = normalizeLower(salida?.destino)
+
+  if (motivo.includes('urban') || destino.includes('urban')) return 'urban'
+  if (motivo.includes('instal')) return 'instalacion'
+  return 'cerradas_otras'
+}
+
+function getRegistroCategoriaLabel(categoria: RegistroCategoria): string {
+  if (categoria === 'en_taller') return 'En taller'
+  if (categoria === 'instalacion') return 'Instalada'
+  if (categoria === 'urban') return 'Enviado a Urban'
+  return 'Cerrada'
+}
+
+function getRegistroCategoriaClass(categoria: RegistroCategoria): string {
+  if (categoria === 'en_taller') return 'border-blue-200 bg-blue-100 text-blue-800'
+  if (categoria === 'instalacion') return 'border-green-200 bg-green-100 text-green-800'
+  if (categoria === 'urban') return 'border-amber-200 bg-amber-100 text-amber-800'
+  return 'border-slate-200 bg-slate-100 text-slate-700'
+}
+
+function formatDestinoSalida(destino: string | null | undefined): string {
+  if (!destino) return 'Sin destino'
+  const normalized = normalizeLower(destino)
+
+  if (normalized.includes('urban')) return 'Urban'
+  if (normalized === 'cliente' || normalized.startsWith('cliente:')) return 'Cliente'
+  return destino
 }
 
 function getAccionBadgeClass(accion: MaquinaTallerMovimiento['accion']): string {
@@ -78,51 +124,119 @@ function getAccionLabel(accion: MaquinaTallerMovimiento['accion']): string {
   return 'Nota'
 }
 
+function isActiveInstallationStatus(status: ServicioTallerOption['status']): boolean {
+  return status === 'pendiente' || status === 'en_ruta'
+}
+
 export function MaquinasTallerPage() {
   const navigate = useNavigate()
   const { toast } = useToast()
 
   const todayIso = formatLocalIsoDate(new Date())
 
-  const [filtroLista, setFiltroLista] = useState<FiltroLista>('todas')
+  const [filtroLista, setFiltroLista] = useState<FiltroLista>('en_taller')
   const [buscarLista, setBuscarLista] = useState('')
   const [selectedRegistroId, setSelectedRegistroId] = useState<number | null>(null)
 
   const [openRegistroDialog, setOpenRegistroDialog] = useState(false)
-  const [registroMotivo, setRegistroMotivo] = useState<MotivoIngreso>('instalacion')
+  const [registroMotivo, setRegistroMotivo] = useState<MotivoIngreso>('manual')
   const [registroMaquinaId, setRegistroMaquinaId] = useState('none')
   const [registroClienteId, setRegistroClienteId] = useState('none')
   const [registroFecha, setRegistroFecha] = useState(todayIso)
   const [registroOrden, setRegistroOrden] = useState('')
   const [registroDiagnostico, setRegistroDiagnostico] = useState('')
+  const [registroSerie, setRegistroSerie] = useState('')
+  const [registroModelo, setRegistroModelo] = useState('')
+  const [openUrbanDialog, setOpenUrbanDialog] = useState(false)
+  const [urbanFecha, setUrbanFecha] = useState(todayIso)
+  const [urbanDetalle, setUrbanDetalle] = useState('')
 
   const { data: registros = [], isLoading } = useMaquinasEnTallerQuery()
   const { data: registrosAbiertos = [] } = useMaquinasEnTallerQuery({ soloAbiertas: true })
+  const { data: instalacionesServicios = [] } = useServiciosTallerQuery('INSTALACION')
   const { data: maquinas = [], isLoading: loadingMaquinas } = useMaquinasQuery()
   const { data: clientes = [] } = useClientesQuery()
+  const { data: movimientosTaller = [] } = useMaquinaTallerMovimientosQuery(undefined, { enabled: true })
+  const isPageLoading = isLoading || loadingMaquinas
 
   const { mutateAsync: registrarEntradaAsync, isPending: registrandoMaquina } = useRegistrarEntradaTallerMutation()
+  const { mutateAsync: crearMaquinaAsync, isPending: creandoMaquina } = useCrearMaquinaMutation()
+  const { mutateAsync: registrarSalidaAsync, isPending: registrandoSalida } = useRegistrarSalidaTallerMutation()
 
-  useEffect(() => {
-    if (!registros.length) {
-      setSelectedRegistroId(null)
-      return
+  const salidasRegistros = useMemo<SalidaTallerResumen[]>(() => {
+    return movimientosTaller
+      .filter((movimiento) => movimiento.accion === 'salida' && movimiento.maquina_taller_id !== null)
+      .map((movimiento) => ({
+        id: movimiento.id,
+        maquina_taller_id: movimiento.maquina_taller_id,
+        motivo: movimiento.motivo,
+        destino: movimiento.destino,
+        fecha_movimiento: movimiento.fecha_movimiento,
+        created_at: movimiento.created_at,
+      }))
+      .sort((left, right) => {
+        const leftKey = `${left.fecha_movimiento}|${left.created_at}`
+        const rightKey = `${right.fecha_movimiento}|${right.created_at}`
+        return rightKey.localeCompare(leftKey)
+      })
+  }, [movimientosTaller])
+
+  const salidaPorRegistroId = useMemo(() => {
+    const result: Record<number, SalidaTallerResumen> = {}
+    for (const salida of salidasRegistros) {
+      if (!salida.maquina_taller_id) continue
+      if (!result[salida.maquina_taller_id]) {
+        result[salida.maquina_taller_id] = salida
+      }
+    }
+    return result
+  }, [salidasRegistros])
+
+  const instalacionPendientePorMaquinaId = useMemo(() => {
+    const result: Record<number, ServicioTallerOption> = {}
+
+    for (const servicio of instalacionesServicios) {
+      if (!servicio.maquina_id || !isActiveInstallationStatus(servicio.status)) continue
+      if (!result[servicio.maquina_id]) {
+        result[servicio.maquina_id] = servicio
+      }
     }
 
-    if (!selectedRegistroId || !registros.some((registro) => registro.id === selectedRegistroId)) {
-      setSelectedRegistroId(registros[0].id)
-    }
-  }, [registros, selectedRegistroId])
+    return result
+  }, [instalacionesServicios])
 
-  const registrosCerrados = registros.length - registrosAbiertos.length
   const terminoBusqueda = buscarLista.trim().toLowerCase()
 
-  const registrosFiltrados = useMemo(() => {
-    return registros.filter((registro) => {
-      const isAbierto = !registro.fecha_salida
+  const conteoCategorias = useMemo(() => {
+    return registros.reduce<Record<RegistroCategoria, number>>((acc, registro) => {
+      const categoria = getRegistroCategoria(registro, salidaPorRegistroId[registro.id])
+      acc[categoria] += 1
+      return acc
+    }, {
+      en_taller: 0,
+      instalacion: 0,
+      urban: 0,
+      cerradas_otras: 0,
+    })
+  }, [registros, salidaPorRegistroId])
 
-      if (filtroLista === 'abiertas' && !isAbierto) return false
-      if (filtroLista === 'cerradas' && isAbierto) return false
+  const registrosFiltrados = useMemo(() => {
+    const registrosOrdenados = [...registros].sort((a, b) => {
+      const categoriaA = getRegistroCategoria(a, salidaPorRegistroId[a.id])
+      const categoriaB = getRegistroCategoria(b, salidaPorRegistroId[b.id])
+
+      if (categoriaA === 'en_taller' && categoriaB !== 'en_taller') return -1
+      if (categoriaA !== 'en_taller' && categoriaB === 'en_taller') return 1
+
+      const fechaA = a.fecha_salida ?? a.fecha_entrada ?? a.created_at
+      const fechaB = b.fecha_salida ?? b.fecha_entrada ?? b.created_at
+      return fechaB.localeCompare(fechaA)
+    })
+
+    return registrosOrdenados.filter((registro) => {
+      const categoria = getRegistroCategoria(registro, salidaPorRegistroId[registro.id])
+
+      if (filtroLista !== 'todas' && categoria !== filtroLista) return false
 
       if (!terminoBusqueda) return true
 
@@ -132,14 +246,37 @@ export function MaquinasTallerPage() {
         || includesNormalized(registro.cliente?.nombre ?? registro.maquina?.cliente?.nombre, terminoBusqueda)
         || includesNormalized(registro.diagnostico, terminoBusqueda)
         || includesNormalized(registro.orden ? String(registro.orden) : null, terminoBusqueda)
+        || includesNormalized(getRegistroCategoriaLabel(categoria), terminoBusqueda)
+        || includesNormalized(instalacionPendientePorMaquinaId[registro.maquina_id]?.orden?.toString() ?? null, terminoBusqueda)
+        || includesNormalized('instalacion pendiente', terminoBusqueda)
       )
     })
-  }, [filtroLista, registros, terminoBusqueda])
+  }, [filtroLista, instalacionPendientePorMaquinaId, registros, salidaPorRegistroId, terminoBusqueda])
+
+  useEffect(() => {
+    if (!registrosFiltrados.length) {
+      setSelectedRegistroId(null)
+      return
+    }
+
+    if (!selectedRegistroId || !registrosFiltrados.some((registro) => registro.id === selectedRegistroId)) {
+      setSelectedRegistroId(registrosFiltrados[0].id)
+    }
+  }, [registrosFiltrados, selectedRegistroId])
 
   const registroSeleccionado = useMemo(
     () => registros.find((registro) => registro.id === selectedRegistroId) ?? null,
     [registros, selectedRegistroId],
   )
+  const salidaRegistroSeleccionado = registroSeleccionado
+    ? salidaPorRegistroId[registroSeleccionado.id]
+    : undefined
+  const categoriaRegistroSeleccionado = registroSeleccionado
+    ? getRegistroCategoria(registroSeleccionado, salidaRegistroSeleccionado)
+    : null
+  const instalacionPendienteSeleccionada = registroSeleccionado
+    ? instalacionPendientePorMaquinaId[registroSeleccionado.maquina_id]
+    : undefined
 
   const maquinasConRegistroAbierto = useMemo(
     () => new Set(registrosAbiertos.map((registro) => registro.maquina_id)),
@@ -152,15 +289,27 @@ export function MaquinasTallerPage() {
   )
 
   const maquinaHistorialId = registroSeleccionado?.maquina_id
-  const { data: movimientosMaquina = [], isLoading: loadingMovimientos } = useMaquinaTallerMovimientosQuery(maquinaHistorialId)
+  const { data: movimientosMaquina = [], isLoading: loadingMovimientos } = useMaquinaTallerMovimientosQuery(
+    maquinaHistorialId,
+    { enabled: Boolean(maquinaHistorialId) },
+  )
+  const isRegistroManual = registroMotivo === 'manual'
+  const isSubmittingRegistro = registrandoMaquina || creandoMaquina
 
   const resetRegistroForm = () => {
-    setRegistroMotivo('instalacion')
+    setRegistroMotivo('manual')
     setRegistroMaquinaId('none')
     setRegistroClienteId('none')
     setRegistroFecha(todayIso)
     setRegistroOrden('')
     setRegistroDiagnostico('')
+    setRegistroSerie('')
+    setRegistroModelo('')
+  }
+
+  const resetUrbanForm = () => {
+    setUrbanFecha(todayIso)
+    setUrbanDetalle('')
   }
 
   const handleAbrirRegistroDialog = () => {
@@ -168,29 +317,67 @@ export function MaquinasTallerPage() {
     setOpenRegistroDialog(true)
   }
 
+  const handleAbrirUrbanDialog = () => {
+    resetUrbanForm()
+    setOpenUrbanDialog(true)
+  }
+
   const handleRegistrarMaquina = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
     try {
-      const maquinaId = parseSelectNumber(registroMaquinaId)
-      if (!maquinaId) {
-        throw new Error('Selecciona una maquina para registrarla en taller.')
-      }
-
       if (!registroFecha) {
         throw new Error('Captura la fecha de ingreso.')
       }
 
       const ordenText = registroOrden.trim()
-      const ordenNumero = ordenText ? Number(ordenText) : undefined
+      const ordenNumero = ordenText.length ? Number(ordenText) : null
 
-      if (ordenText && (!Number.isFinite(ordenNumero) || ordenNumero <= 0)) {
+      if (ordenNumero !== null && (!Number.isFinite(ordenNumero) || ordenNumero <= 0)) {
         throw new Error('El numero de orden debe ser un entero positivo.')
+      }
+
+      let maquinaId: number | undefined
+
+      if (isRegistroManual) {
+        const serie = registroSerie.trim()
+        const modelo = registroModelo.trim()
+
+        if (!serie) {
+          throw new Error('Ingresa el número de serie de la máquina.')
+        }
+
+        if (!modelo) {
+          throw new Error('Ingresa el modelo o nombre de la máquina.')
+        }
+
+        const maquinaExistente = maquinas.find((maquina) => normalizeLower(maquina.serie) === normalizeLower(serie))
+
+        if (maquinaExistente) {
+          maquinaId = maquinaExistente.id
+        } else {
+          const maquinaCreada = await crearMaquinaAsync({
+            serie,
+            modelo,
+            cliente_id: null,
+            fecha_instalacion: null,
+            status: 'operando',
+            observaciones: registroDiagnostico.trim() || null,
+            activo: true,
+          })
+
+          maquinaId = maquinaCreada.id
+        }
+      } else {
+        maquinaId = parseSelectNumber(registroMaquinaId)
+        if (!maquinaId) {
+          throw new Error('Selecciona una maquina para registrarla en taller.')
+        }
       }
 
       const created = await registrarEntradaAsync({
         maquina_id: maquinaId,
-        cliente_id: parseSelectNumber(registroClienteId) ?? null,
+        cliente_id: isRegistroManual ? null : parseSelectNumber(registroClienteId) ?? null,
         fecha_entrada: registroFecha,
         orden: ordenNumero,
         diagnostico: registroDiagnostico.trim() || null,
@@ -198,7 +385,7 @@ export function MaquinasTallerPage() {
       })
 
       setSelectedRegistroId(created.id)
-      setFiltroLista('todas')
+      setFiltroLista('en_taller')
       setBuscarLista('')
       setOpenRegistroDialog(false)
       resetRegistroForm()
@@ -217,12 +404,67 @@ export function MaquinasTallerPage() {
     }
   }
 
+  const handleRegistrarSalidaUrban = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!registroSeleccionado) {
+      toast({
+        title: 'Sin máquina seleccionada',
+        description: 'Selecciona un registro abierto de taller antes de enviarlo a Urban.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (categoriaRegistroSeleccionado !== 'en_taller') {
+      toast({
+        title: 'Registro no disponible',
+        description: 'Solo puedes enviar a Urban una máquina que siga abierta en taller.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (!urbanFecha) {
+      toast({
+        title: 'Fecha requerida',
+        description: 'Captura la fecha de salida hacia Urban.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      await registrarSalidaAsync({
+        registro_id: registroSeleccionado.id,
+        tipo_salida: 'urban',
+        fecha_salida: urbanFecha,
+        detalle: urbanDetalle.trim() || null,
+      })
+
+      setOpenUrbanDialog(false)
+      resetUrbanForm()
+
+      toast({
+        title: 'Máquina enviada a Urban',
+        description: 'El registro de taller se cerró correctamente como salida a Urban.',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo registrar la salida a Urban.'
+      toast({
+        title: 'Error al enviar a Urban',
+        description: message,
+        variant: 'destructive',
+      })
+    }
+  }
+
   return (
     <>
       <div>
         <PageHeader
           title="Maquinas en taller"
-          description="Vista simplificada: seguimiento de lista e historial. Los movimientos de servicios se sincronizan automaticamente."
+          description="Seguimiento claro de equipos en taller vs historico cerrado por instalacion, Urban u otros motivos."
           actions={(
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -241,20 +483,17 @@ export function MaquinasTallerPage() {
         />
 
         <div className="space-y-4 p-5 lg:p-7">
-          <div className="rounded-2xl border border-blue-200 bg-blue-50/70 p-4">
-            <p className="text-sm font-semibold text-ran-navy">Automatizacion activa</p>
-            <p className="mt-1 text-sm text-ran-slate">
-              Los ingresos por retiro y las salidas por instalacion se registran automaticamente desde Servicios.
-              Usa <span className="font-semibold text-ran-navy">Registrar maquina</span> para ingresos manuales adicionales.
-            </p>
-          </div>
+          <p className="text-sm text-ran-slate">
+            Esta vista se actualiza automaticamente desde <span className="font-semibold text-ran-navy">Servicios</span> al completar/cerrar
+            tipos de retiro, instalacion y envio a Urban. El boton <span className="font-semibold text-ran-navy">Registrar maquina</span> es solo para ingresos manuales.
+          </p>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[350px_minmax(0,1fr)]">
             <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-lg font-bold text-ran-navy">Lista de taller</h3>
                 <Badge variant="outline" className="border-blue-200 bg-blue-100 text-blue-800">
-                  {registrosAbiertos.length} abiertas
+                  {conteoCategorias.en_taller} en taller
                 </Badge>
               </div>
 
@@ -264,36 +503,56 @@ export function MaquinasTallerPage() {
                   <Input
                     value={buscarLista}
                     onChange={(event) => setBuscarLista(event.target.value)}
-                    placeholder="Buscar por serie, cliente u orden"
+                    placeholder="Buscar por serie, cliente, orden o estado"
                     className="h-10 rounded-xl border-slate-200 pl-10"
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 rounded-xl bg-slate-100 p-1">
+                <div className="flex flex-wrap gap-2 rounded-xl bg-slate-100 p-2">
                   <button
                     type="button"
                     className={cn(
-                      'h-8 rounded-lg text-xs font-semibold transition-colors',
-                      filtroLista === 'abiertas' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
+                      'h-8 rounded-lg px-3 text-xs font-semibold transition-colors',
+                      filtroLista === 'en_taller' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
                     )}
-                    onClick={() => setFiltroLista('abiertas')}
+                    onClick={() => setFiltroLista('en_taller')}
                   >
-                    Abiertas
+                    En taller
                   </button>
                   <button
                     type="button"
                     className={cn(
-                      'h-8 rounded-lg text-xs font-semibold transition-colors',
-                      filtroLista === 'cerradas' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
+                      'h-8 rounded-lg px-3 text-xs font-semibold transition-colors',
+                      filtroLista === 'instalacion' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
                     )}
-                    onClick={() => setFiltroLista('cerradas')}
+                    onClick={() => setFiltroLista('instalacion')}
                   >
-                    Cerradas
+                    Instaladas
                   </button>
                   <button
                     type="button"
                     className={cn(
-                      'h-8 rounded-lg text-xs font-semibold transition-colors',
+                      'h-8 rounded-lg px-3 text-xs font-semibold transition-colors',
+                      filtroLista === 'urban' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
+                    )}
+                    onClick={() => setFiltroLista('urban')}
+                  >
+                    Urban
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      'h-8 rounded-lg px-3 text-xs font-semibold transition-colors',
+                      filtroLista === 'cerradas_otras' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
+                    )}
+                    onClick={() => setFiltroLista('cerradas_otras')}
+                  >
+                    Otras cerradas
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      'h-8 rounded-lg px-3 text-xs font-semibold transition-colors',
                       filtroLista === 'todas' ? 'bg-white text-ran-navy shadow-sm' : 'text-ran-slate hover:text-ran-navy',
                     )}
                     onClick={() => setFiltroLista('todas')}
@@ -305,9 +564,7 @@ export function MaquinasTallerPage() {
 
               <div className="mt-4 max-h-[620px] space-y-2 overflow-y-auto pr-1">
                 {isLoading ? (
-                  <div className="flex h-24 items-center justify-center">
-                    <LoadingSpinner size="lg" />
-                  </div>
+                  <AdminCardListSkeleton count={5} />
                 ) : registrosFiltrados.length === 0 ? (
                   <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-ran-slate">
                     No hay registros para este filtro.
@@ -315,6 +572,11 @@ export function MaquinasTallerPage() {
                 ) : (
                   registrosFiltrados.map((registro) => {
                     const selected = registro.id === selectedRegistroId
+                    const salidaResumen = salidaPorRegistroId[registro.id]
+                    const categoria = getRegistroCategoria(registro, salidaResumen)
+                    const instalacionPendiente = categoria === 'en_taller'
+                      ? instalacionPendientePorMaquinaId[registro.maquina_id]
+                      : undefined
 
                     return (
                       <button
@@ -337,14 +599,30 @@ export function MaquinasTallerPage() {
                               {registro.maquina?.modelo ?? 'Sin modelo'} · {registro.cliente?.nombre ?? registro.maquina?.cliente?.nombre ?? 'Sin cliente'}
                             </p>
                           </div>
-                          <Badge variant="outline" className={getRegistroEstadoClass(registro)}>
-                            {getRegistroEstadoLabel(registro)}
+                          <Badge variant="outline" className={getRegistroCategoriaClass(categoria)}>
+                            {getRegistroCategoriaLabel(categoria)}
                           </Badge>
+                          {instalacionPendiente && (
+                            <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">
+                              Instalación pendiente
+                            </Badge>
+                          )}
                         </div>
 
                         <p className="mt-2 text-xs text-ran-slate">
                           Entrada: {formatDate(registro.fecha_entrada)} · OS: {registro.orden ? `#${registro.orden}` : 'Sin OS'}
                         </p>
+                        {instalacionPendiente && (
+                          <p className="mt-1 text-xs text-ran-slate">
+                            Instalación pendiente: OS {instalacionPendiente.orden ? `#${instalacionPendiente.orden}` : 'sin orden'} · {instalacionPendiente.status === 'en_ruta' ? 'En ruta' : 'Pendiente'}
+                          </p>
+                        )}
+                        {categoria !== 'en_taller' && (
+                          <p className="mt-1 text-xs text-ran-slate">
+                            Salida: {formatDate(registro.fecha_salida)} · {getRegistroCategoriaLabel(categoria)}
+                            {salidaResumen?.destino ? ` · Destino: ${formatDestinoSalida(salidaResumen.destino)}` : ''}
+                          </p>
+                        )}
                       </button>
                     )
                   })
@@ -353,22 +631,40 @@ export function MaquinasTallerPage() {
             </aside>
 
             <section className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-sm font-medium text-ran-slate">En taller</p>
-                  <p className="mt-1 text-3xl font-extrabold text-ran-navy">{registrosAbiertos.length}</p>
-                  <p className="text-xs text-ran-slate">Registros abiertos</p>
-                </div>
+              {isPageLoading ? (
+                <AdminStatsGridSkeleton count={4} className="mb-0" />
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-medium text-ran-slate">En taller ahora</p>
+                    <p className="mt-1 text-3xl font-extrabold text-blue-700">{conteoCategorias.en_taller}</p>
+                    <p className="text-xs text-ran-slate">Registros abiertos</p>
+                  </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-sm font-medium text-ran-slate">Historial</p>
-                  <p className="mt-1 text-3xl font-extrabold text-ran-navy">{registros.length}</p>
-                  <p className="text-xs text-ran-slate">{registrosCerrados} cerrados</p>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-medium text-ran-slate">Salidas por instalacion</p>
+                    <p className="mt-1 text-3xl font-extrabold text-green-700">{conteoCategorias.instalacion}</p>
+                    <p className="text-xs text-ran-slate">Registros cerrados por instalacion</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-medium text-ran-slate">Salidas a Urban</p>
+                    <p className="mt-1 text-3xl font-extrabold text-amber-700">{conteoCategorias.urban}</p>
+                    <p className="text-xs text-ran-slate">Equipos enviados para desecho</p>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <p className="text-sm font-medium text-ran-slate">Otras cerradas</p>
+                    <p className="mt-1 text-3xl font-extrabold text-ran-navy">{conteoCategorias.cerradas_otras}</p>
+                    <p className="text-xs text-ran-slate">Registros historicos adicionales</p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                {!registroSeleccionado ? (
+                {isPageLoading ? (
+                  <AdminCardListSkeleton count={3} />
+                ) : !registroSeleccionado ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-ran-slate">
                     Selecciona una maquina de la lista para ver su detalle.
                   </div>
@@ -385,9 +681,16 @@ export function MaquinasTallerPage() {
                       </div>
 
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className={getRegistroEstadoClass(registroSeleccionado)}>
-                          {getRegistroEstadoLabel(registroSeleccionado)}
-                        </Badge>
+                        {categoriaRegistroSeleccionado && (
+                          <Badge variant="outline" className={getRegistroCategoriaClass(categoriaRegistroSeleccionado)}>
+                            {getRegistroCategoriaLabel(categoriaRegistroSeleccionado)}
+                          </Badge>
+                        )}
+                        {instalacionPendienteSeleccionada && categoriaRegistroSeleccionado === 'en_taller' && (
+                          <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">
+                            Instalación pendiente
+                          </Badge>
+                        )}
                         <Button
                           variant="outline"
                           size="sm"
@@ -397,10 +700,20 @@ export function MaquinasTallerPage() {
                           <History className="mr-1 h-3.5 w-3.5" />
                           Ver historial completo
                         </Button>
+                        {categoriaRegistroSeleccionado === 'en_taller' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 rounded-lg border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900"
+                            onClick={handleAbrirUrbanDialog}
+                          >
+                            Enviar a Urban
+                          </Button>
+                        )}
                       </div>
                     </div>
 
-                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <p className="text-xs font-semibold text-ran-slate">Fecha de entrada</p>
                         <p className="mt-1 text-sm font-semibold text-ran-navy">{formatDate(registroSeleccionado.fecha_entrada)}</p>
@@ -413,9 +726,36 @@ export function MaquinasTallerPage() {
                         <p className="text-xs font-semibold text-ran-slate">Orden</p>
                         <p className="mt-1 text-sm font-semibold text-ran-navy">{registroSeleccionado.orden ? `#${registroSeleccionado.orden}` : 'Sin orden'}</p>
                       </div>
+                      {(categoriaRegistroSeleccionado === 'en_taller' || instalacionPendienteSeleccionada) && (
+                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                          <p className="text-xs font-semibold text-ran-slate">Instalación pendiente</p>
+                          <p className="mt-1 text-sm font-semibold text-ran-navy">
+                            {instalacionPendienteSeleccionada
+                              ? `OS ${instalacionPendienteSeleccionada.orden ? `#${instalacionPendienteSeleccionada.orden}` : 'sin orden'}`
+                              : 'Sin reserva'}
+                          </p>
+                          {instalacionPendienteSeleccionada && (
+                            <p className="mt-1 text-xs text-ran-slate">
+                              {instalacionPendienteSeleccionada.status === 'en_ruta' ? 'Servicio en ruta' : 'Servicio pendiente'}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                         <p className="text-xs font-semibold text-ran-slate">Registro</p>
                         <p className="mt-1 text-sm font-semibold text-ran-navy">#{registroSeleccionado.id}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold text-ran-slate">Resultado de salida</p>
+                        <p className="mt-1 text-sm font-semibold text-ran-navy">
+                          {categoriaRegistroSeleccionado ? getRegistroCategoriaLabel(categoriaRegistroSeleccionado) : 'Sin dato'}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold text-ran-slate">Destino</p>
+                        <p className="mt-1 text-sm font-semibold text-ran-navy">
+                          {formatDestinoSalida(salidaRegistroSeleccionado?.destino)}
+                        </p>
                       </div>
                     </div>
 
@@ -446,9 +786,7 @@ export function MaquinasTallerPage() {
                     Sin maquina seleccionada.
                   </div>
                 ) : loadingMovimientos ? (
-                  <div className="flex h-28 items-center justify-center">
-                    <LoadingSpinner size="lg" />
-                  </div>
+                  <AdminCardListSkeleton count={4} />
                 ) : movimientosMaquina.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-ran-slate">
                     Esta maquina aun no tiene movimientos registrados.
@@ -502,7 +840,7 @@ export function MaquinasTallerPage() {
           <DialogHeader className="border-b border-slate-200 px-6 py-4">
             <DialogTitle className="text-ran-navy">Registrar maquina en taller</DialogTitle>
             <DialogDescription>
-              Usa este formulario solo para ingresos manuales que no llegan automaticamente desde un servicio RETIRO.
+              Registra ingresos externos/manuales o prepara una máquina existente para instalación sin depender de un servicio de retiro.
             </DialogDescription>
           </DialogHeader>
 
@@ -516,63 +854,95 @@ export function MaquinasTallerPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="instalacion">Preparacion para instalacion</SelectItem>
-                    <SelectItem value="manual">Ingreso manual</SelectItem>
+                    <SelectItem value="manual">Ingreso externo/manual</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="registro-fecha">Fecha de ingreso</Label>
-                <Input
-                  id="registro-fecha"
-                  type="date"
+                <DatePickerInput
                   value={registroFecha}
-                  max={todayIso}
-                  onChange={(event) => setRegistroFecha(event.target.value)}
-                  className="h-10 rounded-xl"
+                  onChange={(value) => setRegistroFecha(value ?? todayIso)}
+                  maxDate={todayIso}
+                  placeholder="Seleccionar fecha de ingreso"
                 />
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Maquina</Label>
-              <Select value={registroMaquinaId} onValueChange={setRegistroMaquinaId}>
-                <SelectTrigger className="h-10 rounded-xl">
-                  <SelectValue placeholder="Seleccionar maquina" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Seleccionar maquina</SelectItem>
-                  {maquinasDisponibles.map((maquina) => (
-                    <SelectItem key={maquina.id} value={String(maquina.id)}>
-                      {maquina.modelo} · {maquina.serie}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {isRegistroManual ? (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="registro-modelo">Modelo</Label>
+                    <Input
+                      id="registro-modelo"
+                      value={registroModelo}
+                      onChange={(event) => setRegistroModelo(event.target.value)}
+                      placeholder="Ej. KM901"
+                      className="h-10 rounded-xl"
+                    />
+                  </div>
 
-              {loadingMaquinas ? (
-                <p className="text-xs text-ran-slate">Cargando maquinas...</p>
-              ) : maquinasDisponibles.length === 0 ? (
-                <p className="text-xs text-ran-slate">No hay maquinas disponibles para un nuevo ingreso manual.</p>
-              ) : null}
-            </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="registro-serie">Número de serie</Label>
+                    <Input
+                      id="registro-serie"
+                      value={registroSerie}
+                      onChange={(event) => setRegistroSerie(event.target.value)}
+                      placeholder="Ej. SR-123456"
+                      className="h-10 rounded-xl"
+                    />
+                  </div>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label>Cliente origen (opcional)</Label>
-              <Select value={registroClienteId} onValueChange={setRegistroClienteId}>
-                <SelectTrigger className="h-10 rounded-xl">
-                  <SelectValue placeholder="Seleccionar cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Sin cliente</SelectItem>
-                  {clientes.map((cliente) => (
-                    <SelectItem key={cliente.id} value={String(cliente.id)}>
-                      {cliente.nombre}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-ran-slate">
+                  Este modo es para equipos externos. La máquina se registra sin cliente de origen y se crea automáticamente si la serie no existe.
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Máquina</Label>
+                  <Select value={registroMaquinaId} onValueChange={setRegistroMaquinaId}>
+                    <SelectTrigger className="h-10 rounded-xl">
+                      <SelectValue placeholder="Seleccionar maquina" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Seleccionar maquina</SelectItem>
+                      {maquinasDisponibles.map((maquina) => (
+                        <SelectItem key={maquina.id} value={String(maquina.id)}>
+                          {maquina.modelo} · {maquina.serie}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {loadingMaquinas ? (
+                    <Skeleton className="h-4 w-44 rounded-full" />
+                  ) : maquinasDisponibles.length === 0 ? (
+                    <p className="text-xs text-ran-slate">No hay máquinas disponibles para preparar una instalación manual.</p>
+                  ) : null}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Cliente origen (opcional)</Label>
+                  <Select value={registroClienteId} onValueChange={setRegistroClienteId}>
+                    <SelectTrigger className="h-10 rounded-xl">
+                      <SelectValue placeholder="Seleccionar cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin cliente</SelectItem>
+                      {clientes.map((cliente) => (
+                        <SelectItem key={cliente.id} value={String(cliente.id)}>
+                          {cliente.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -611,9 +981,79 @@ export function MaquinasTallerPage() {
               <Button
                 type="submit"
                 className="h-10 rounded-xl bg-ran-navy px-5 hover:bg-ran-navy/90"
-                disabled={registrandoMaquina || maquinasDisponibles.length === 0}
+                disabled={isSubmittingRegistro || (!isRegistroManual && maquinasDisponibles.length === 0)}
               >
-                {registrandoMaquina ? 'Registrando...' : 'Registrar maquina'}
+                {isSubmittingRegistro ? 'Registrando...' : 'Registrar maquina'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openUrbanDialog}
+        onOpenChange={(nextOpen) => {
+          setOpenUrbanDialog(nextOpen)
+          if (!nextOpen) {
+            resetUrbanForm()
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-2xl border border-slate-200 p-0">
+          <DialogHeader className="border-b border-slate-200 px-6 py-4">
+            <DialogTitle className="text-ran-navy">Marcar como enviado a Urban</DialogTitle>
+            <DialogDescription>
+              Cierra el registro abierto de taller y deja el equipo marcado como salida a Urban.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleRegistrarSalidaUrban} className="space-y-4 px-6 py-5">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-900">
+                {registroSeleccionado?.maquina?.modelo ?? 'Equipo'} · {registroSeleccionado?.maquina?.serie ?? 'Sin serie'}
+              </p>
+              <p className="mt-1 text-xs text-amber-800">
+                {registroSeleccionado?.cliente?.nombre ?? registroSeleccionado?.maquina?.cliente?.nombre ?? 'Sin cliente asignado'}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="urban-fecha">Fecha de salida</Label>
+              <DatePickerInput
+                value={urbanFecha}
+                onChange={(value) => setUrbanFecha(value ?? todayIso)}
+                minDate={registroSeleccionado?.fecha_entrada ?? undefined}
+                maxDate={todayIso}
+                placeholder="Seleccionar fecha de salida"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="urban-detalle">Detalle (opcional)</Label>
+              <Input
+                id="urban-detalle"
+                value={urbanDetalle}
+                onChange={(event) => setUrbanDetalle(event.target.value)}
+                placeholder="Ej. destrucción, reciclaje o guía de traslado"
+                className="h-10 rounded-xl"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-xl"
+                onClick={() => setOpenUrbanDialog(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                className="h-10 rounded-xl bg-ran-navy px-5 hover:bg-ran-navy/90"
+                disabled={registrandoSalida || categoriaRegistroSeleccionado !== 'en_taller'}
+              >
+                {registrandoSalida ? 'Guardando...' : 'Confirmar envío a Urban'}
               </Button>
             </div>
           </form>

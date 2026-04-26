@@ -1,20 +1,25 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, Camera, FileText, Pencil } from 'lucide-react'
+import { ArrowLeft, Camera, Download, FileText, Pencil } from 'lucide-react'
+import { AdminBreadcrumbs } from '@/components/shared/AdminBreadcrumbs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import { PageLoading } from '@/components/shared/LoadingSpinner'
+import { AdminPageLoadingSkeleton, AdminTableSkeleton } from '@/components/shared/AdminSkeletons'
 import { ServicioStatusBadge } from '@/components/shared/StatusBadge'
-import { ExportButton } from '@/components/shared/ExportButton'
-import { useServicioDetalleQuery } from '@/hooks/use-servicios'
+import { useServicioDetalleQuery, useServicioRefaccionesQuery } from '@/hooks/use-servicios'
 import { useCierreQuery } from '@/hooks/use-cierres'
 import { useEvidenciaUrlQuery, useEvidenciasQuery } from '@/hooks/use-evidencias'
-import { supabase } from '@/lib/supabase'
+import { useToast } from '@/hooks/use-toast'
+import {
+  buildFriendlyEvidenciaFilename,
+  buildFriendlyOrdenFilename,
+  buildServicioOrderReference,
+} from '@/lib/evidencias-filename'
 import { formatDate, formatDateTime, formatMXN } from '@/lib/utils'
-import type { Evidencia, ServicioRefaccion } from '@/types/domain.types'
+import { Skeleton } from '@/components/ui/skeleton'
+import type { Evidencia } from '@/types/domain.types'
 
 interface EvidenciaPreview {
   filename: string
@@ -23,6 +28,7 @@ interface EvidenciaPreview {
 
 interface EvidenciaCardProps {
   evidencia: Evidencia
+  displayFilename: string
   onPreview: (preview: EvidenciaPreview) => void
 }
 
@@ -30,34 +36,10 @@ function isOrdenServicioFilename(filename: string): boolean {
   return filename.startsWith('orden-servicio__')
 }
 
-function getDisplayFilename(filename: string): string {
-  const parts = filename.split('__')
-  if (parts.length >= 3) {
-    return parts.slice(2).join('__')
-  }
-  return filename
-}
-
-function formatBytes(bytes: number | null | undefined): string {
-  if (bytes == null || bytes <= 0) return '—'
-
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = bytes
-  let unitIndex = 0
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-
-  const fractionDigits = value >= 10 || unitIndex === 0 ? 0 : 1
-  return `${value.toFixed(fractionDigits)} ${units[unitIndex]}`
-}
-
-function EvidenciaCard({ evidencia, onPreview }: EvidenciaCardProps) {
+function EvidenciaCard({ evidencia, displayFilename, onPreview }: EvidenciaCardProps) {
   const { data } = useEvidenciaUrlQuery(evidencia.r2_key)
   const downloadUrl = data?.downloadUrl
-  const displayFilename = getDisplayFilename(evidencia.filename)
+  const isOrdenServicio = isOrdenServicioFilename(evidencia.filename)
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -74,8 +56,13 @@ function EvidenciaCard({ evidencia, onPreview }: EvidenciaCardProps) {
           {downloadUrl ? (
             <img src={downloadUrl} alt={displayFilename} className="h-full w-full object-cover" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Camera className="h-5 w-5 text-slate-400" />
+            <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-3 text-center">
+              {isOrdenServicio ? (
+                <FileText className="h-5 w-5 text-slate-400" />
+              ) : (
+                <Camera className="h-5 w-5 text-slate-400" />
+              )}
+              <p className="text-[11px] font-medium text-slate-500">Solo metadatos offline</p>
             </div>
           )}
         </div>
@@ -84,7 +71,6 @@ function EvidenciaCard({ evidencia, onPreview }: EvidenciaCardProps) {
       <div className="space-y-1 px-2.5 py-2 text-xs text-ran-slate">
         <p className="truncate font-semibold text-ran-navy">{displayFilename}</p>
         <p>{formatDateTime(evidencia.created_at)}</p>
-        <p>{formatBytes(evidencia.size_bytes)} · {evidencia.mime_type || 'Sin MIME'}</p>
       </div>
     </div>
   )
@@ -94,25 +80,14 @@ export function ServicioDetallePage() {
   const { id } = useParams<{ id: string }>()
   const servicioId = Number(id)
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [previewEvidencia, setPreviewEvidencia] = useState<EvidenciaPreview | null>(null)
+  const [isExportingWorkbook, setIsExportingWorkbook] = useState(false)
 
   const { data: servicio, isLoading } = useServicioDetalleQuery(servicioId)
   const { data: cierre } = useCierreQuery(servicioId)
   const { data: evidencias = [], isLoading: loadingEvidencias } = useEvidenciasQuery(servicioId, Boolean(servicioId))
-
-  const { data: refacciones = [], isLoading: loadingRefacciones } = useQuery({
-    queryKey: ['servicio-refacciones', servicioId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('servicio_refacciones')
-        .select('*')
-        .eq('servicio_id', servicioId)
-        .order('id')
-      if (error) throw error
-      return data as ServicioRefaccion[]
-    },
-    enabled: servicioId > 0,
-  })
+  const { data: refacciones = [], isLoading: loadingRefacciones } = useServicioRefaccionesQuery(servicioId)
 
   const totalRefacciones = refacciones.reduce(
     (sum, item) => sum + item.cantidad * item.precio_unitario,
@@ -138,11 +113,48 @@ export function ServicioDetallePage() {
   const { data: evidenciaOrdenUrlData } = useEvidenciaUrlQuery(evidenciaOrden?.r2_key ?? null)
   const evidenciaOrdenUrl = evidenciaOrdenUrlData?.downloadUrl
 
-  if (isLoading) return <PageLoading />
+  if (isLoading) return <AdminPageLoadingSkeleton />
   if (!servicio) return <div className="p-6">Servicio no encontrado</div>
+  const orderReference = buildServicioOrderReference(servicio.orden, servicio.id)
+  const evidenciaOrdenDisplayFilename = buildFriendlyOrdenFilename(orderReference)
+
+  const handleExportWorkbook = async () => {
+    setIsExportingWorkbook(true)
+
+    try {
+      const { exportServiceEvidenceWorkbook } = await import('@/lib/reportes-export')
+      const result = await exportServiceEvidenceWorkbook({
+        servicio,
+        cierre: cierre ?? null,
+        refacciones,
+        evidencias,
+      })
+
+      toast({
+        title: 'Evidencia exportada',
+        description: `Se descargó ${result.filename}.`,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo generar el archivo de evidencia.'
+      toast({
+        title: 'Error al exportar',
+        description: message,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsExportingWorkbook(false)
+    }
+  }
 
   return (
     <div className="p-4 lg:p-5">
+      <AdminBreadcrumbs
+        items={[
+          'Servicios',
+          servicio.orden ? `Servicio #${servicio.orden}` : `Servicio #${servicio.id}`,
+        ]}
+      />
+
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <Button
@@ -175,12 +187,16 @@ export function ServicioDetallePage() {
               Editar
             </Button>
           )}
-          <ExportButton
-            endpoint="generar-evidencia-os"
-            payload={{ servicioId }}
-            filename={`evidencia-OS-${servicioId}.xlsx`}
-            label="Exportar OS"
-          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportWorkbook}
+            disabled={isExportingWorkbook || loadingRefacciones || loadingEvidencias}
+            className="h-10 gap-2 rounded-xl"
+          >
+            <Download className="h-4 w-4" />
+            {isExportingWorkbook ? 'Generando...' : 'Exportar OS'}
+          </Button>
         </div>
       </div>
 
@@ -329,11 +345,7 @@ export function ServicioDetallePage() {
           </CardHeader>
           <CardContent>
             {loadingRefacciones ? (
-              <div className="space-y-2">
-                {Array.from({ length: 4 }).map((_, index) => (
-                  <div key={`refaccion-skeleton-${index}`} className="h-10 animate-pulse rounded-lg bg-slate-100" />
-                ))}
-              </div>
+              <AdminTableSkeleton rows={4} columns={4} />
             ) : (
               <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                 <div className="grid grid-cols-[1.4fr_0.45fr_0.55fr_0.55fr] gap-2 border-b border-slate-200 pb-2 text-xs font-semibold uppercase tracking-wide text-ran-slate">
@@ -433,7 +445,7 @@ export function ServicioDetallePage() {
             {loadingEvidencias ? (
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                 {Array.from({ length: 4 }).map((_, index) => (
-                  <div key={`evidencia-skeleton-${index}`} className="h-44 animate-pulse rounded-xl bg-slate-100" />
+                  <Skeleton key={`evidencia-skeleton-${index}`} className="h-44 rounded-xl" />
                 ))}
               </div>
             ) : evidenciasFotos.length === 0 ? (
@@ -442,8 +454,13 @@ export function ServicioDetallePage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {evidenciasFotos.map((evidencia) => (
-                  <EvidenciaCard key={evidencia.id} evidencia={evidencia} onPreview={setPreviewEvidencia} />
+                {evidenciasFotos.map((evidencia, index) => (
+                  <EvidenciaCard
+                    key={evidencia.id}
+                    evidencia={evidencia}
+                    displayFilename={buildFriendlyEvidenciaFilename(orderReference, index + 1)}
+                    onPreview={setPreviewEvidencia}
+                  />
                 ))}
               </div>
             )}
@@ -455,7 +472,16 @@ export function ServicioDetallePage() {
             <CardTitle className="text-xl text-ran-navy">Orden de servicio (hoja)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!evidenciaOrden ? (
+            {loadingEvidencias ? (
+              <>
+                <Skeleton className="h-52 rounded-xl" />
+                <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                  <Skeleton className="h-4 w-48 rounded-full" />
+                  <Skeleton className="h-3.5 w-32 rounded-full" />
+                  <Skeleton className="h-3.5 w-40 rounded-full" />
+                </div>
+              </>
+            ) : !evidenciaOrden ? (
               <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-ran-slate">
                 No hay hoja de orden registrada.
               </div>
@@ -467,7 +493,7 @@ export function ServicioDetallePage() {
                   onClick={() => {
                     if (!evidenciaOrdenUrl) return
                     setPreviewEvidencia({
-                      filename: getDisplayFilename(evidenciaOrden.filename),
+                      filename: evidenciaOrdenDisplayFilename,
                       downloadUrl: evidenciaOrdenUrl,
                     })
                   }}
@@ -477,7 +503,7 @@ export function ServicioDetallePage() {
                     {evidenciaOrdenUrl ? (
                       <img
                         src={evidenciaOrdenUrl}
-                        alt={getDisplayFilename(evidenciaOrden.filename)}
+                        alt={evidenciaOrdenDisplayFilename}
                         className="h-full w-full object-cover"
                       />
                     ) : (
@@ -489,9 +515,8 @@ export function ServicioDetallePage() {
                 </button>
 
                 <div className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <p className="truncate font-semibold text-ran-navy">{getDisplayFilename(evidenciaOrden.filename)}</p>
+                  <p className="truncate font-semibold text-ran-navy">{evidenciaOrdenDisplayFilename}</p>
                   <p className="text-ran-slate">{formatDateTime(evidenciaOrden.created_at)}</p>
-                  <p className="text-ran-slate">{formatBytes(evidenciaOrden.size_bytes)} · {evidenciaOrden.mime_type || 'Sin MIME'}</p>
                 </div>
               </>
             )}

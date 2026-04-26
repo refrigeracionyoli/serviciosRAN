@@ -1,5 +1,6 @@
 import { ArrowLeft } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { AdminBreadcrumbs } from '@/components/shared/AdminBreadcrumbs'
 import { Button } from '@/components/ui/button'
 import { PolizaForm } from '@/components/forms/PolizaForm'
 import { useCrearPolizaMutation } from '@/hooks/use-polizas'
@@ -33,6 +34,8 @@ export function PolizaNuevaPage() {
 
   return (
     <div className="p-5 lg:p-7">
+      <AdminBreadcrumbs items={['Pólizas', 'Nueva póliza']} />
+
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <Button

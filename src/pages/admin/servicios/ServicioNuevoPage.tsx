@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { ServicioForm } from '@/components/forms/ServicioForm'
+import { AdminBreadcrumbs } from '@/components/shared/AdminBreadcrumbs'
 import { useCrearServicioMutation } from '@/hooks/use-servicios'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
@@ -8,21 +9,50 @@ import type { CrearServicioInput } from '@/schemas/servicio.schema'
 
 const SERVICIO_DRAFT_KEY = 'ran.servicio-nuevo.draft'
 
+interface ServicioNuevoLocationState {
+  source?: 'cliente-nuevo'
+  selectedClienteId?: number
+}
+
 export function ServicioNuevoPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { mutate: crearServicio, isPending } = useCrearServicioMutation()
+  const locationState = (location.state as ServicioNuevoLocationState | null) ?? null
+  const selectedClienteIdFromReturn = typeof locationState?.selectedClienteId === 'number'
+    ? locationState.selectedClienteId
+    : undefined
+
   const [draftValues] = useState<Partial<CrearServicioInput> | undefined>(() => {
+    let parsedDraft: Partial<CrearServicioInput> | undefined
+
     try {
       const raw = localStorage.getItem(SERVICIO_DRAFT_KEY)
-      if (!raw) return undefined
-      return JSON.parse(raw) as Partial<CrearServicioInput>
+      if (raw) {
+        parsedDraft = JSON.parse(raw) as Partial<CrearServicioInput>
+      }
     } catch {
-      return undefined
+      parsedDraft = undefined
     }
+
+    if (typeof selectedClienteIdFromReturn === 'number') {
+      return {
+        ...parsedDraft,
+        cliente_id: selectedClienteIdFromReturn,
+        maquina_id: undefined,
+      }
+    }
+
+    return parsedDraft
   })
 
-  const handleDraftChange = (draft: Partial<CrearServicioInput>) => {
+  const handleDraftChange = (draft: Partial<CrearServicioInput> | null) => {
     try {
+      if (!draft) {
+        localStorage.removeItem(SERVICIO_DRAFT_KEY)
+        return
+      }
+
       localStorage.setItem(SERVICIO_DRAFT_KEY, JSON.stringify(draft))
     } catch {
       // Ignora errores de quota/privacidad sin romper el flujo de captura.
@@ -31,6 +61,8 @@ export function ServicioNuevoPage() {
 
   return (
     <div className="p-5 lg:p-7">
+      <AdminBreadcrumbs items={['Servicios', 'Nuevo servicio']} />
+
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <Button
@@ -69,6 +101,15 @@ export function ServicioNuevoPage() {
           showSubmitButton={false}
           isLoading={isPending}
           onDraftChange={handleDraftChange}
+          onCreateClienteRequest={(draft) => {
+            handleDraftChange(draft)
+            navigate('/catalogos/clientes/nuevo', {
+              state: {
+                source: 'servicio-nuevo',
+                returnTo: '/servicios/nuevo',
+              },
+            })
+          }}
           onSubmit={(data) => {
             crearServicio(data, {
               onSuccess: (servicio) => {

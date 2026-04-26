@@ -6,7 +6,12 @@ node_modules/
 # Build output
 dist/
 dist-ssr/
+dev-dist/
 *.local
+
+# Local AI/design workspaces
+.claude/
+.tmp_figma/
 
 # Environment variables — NEVER commit real credentials
 .env.local
@@ -38,5 +43,5 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# PWA
-dev-dist/
+# Supabase local CLI state
+supabase/.temp/

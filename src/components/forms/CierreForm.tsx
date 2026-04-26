@@ -1,13 +1,14 @@
-import { useEffect, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, type FormEvent } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cierreSchema, type CierreInput } from '@/schemas/cliente.schema'
+import { useCierresCatalogoQuery } from '@/hooks/use-cierres'
 import { useTecnicosQuery } from '@/hooks/use-tecnicos'
-import { supabase } from '@/lib/supabase'
+import { DatePickerInput } from '@/components/shared/DatePickerInput'
+import { formatLocalIsoDate } from '@/lib/utils'
 import {
   Select,
   SelectContent,
@@ -22,6 +23,10 @@ interface Props {
   onSubmit: (data: CierreInput) => void
   isLoading?: boolean
   onDraftChange?: () => void
+  defaultAviso?: number | null
+  defaultTecnicoId?: string | null
+  defaultCostoTotal?: number | null
+  defaultFechaCierre?: string | null
 }
 
 function normalizeCatalogValues(values: Array<string | null | undefined>): string[] {
@@ -39,22 +44,19 @@ function normalizeCatalogValues(values: Array<string | null | undefined>): strin
   return Array.from(map.values()).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
 }
 
-export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: Props) {
+export function CierreForm({
+  servicioId,
+  onSubmit,
+  isLoading,
+  onDraftChange,
+  defaultAviso,
+  defaultTecnicoId,
+  defaultCostoTotal,
+  defaultFechaCierre,
+}: Props) {
   const { data: tecnicos = [] } = useTecnicosQuery()
-  const { data: catalogoCierres = [] } = useQuery({
-    queryKey: ['cierres', 'catalogo-dinamico'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('cierres')
-        .select('parte_objeto, causa')
-        .order('created_at', { ascending: false })
-        .limit(1000)
-
-      if (error) throw error
-      return data as Array<{ parte_objeto: string | null; causa: string | null }>
-    },
-    staleTime: 1000 * 60 * 10,
-  })
+  const { data: catalogoCierres = [] } = useCierresCatalogoQuery()
+  const todayIso = formatLocalIsoDate(new Date())
 
   const parteObjetoOptions = useMemo(
     () => normalizeCatalogValues(catalogoCierres.map((item) => item.parte_objeto)),
@@ -74,11 +76,45 @@ export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: P
     formState: { errors },
   } = useForm<CierreInput>({
     resolver: zodResolver(cierreSchema),
-    defaultValues: { servicio_id: servicioId },
+    defaultValues: {
+      servicio_id: servicioId,
+      aviso: defaultAviso ?? undefined,
+      tecnico_id: defaultTecnicoId ?? undefined,
+      costo_total: defaultCostoTotal ?? undefined,
+      fecha_cierre: defaultFechaCierre && defaultFechaCierre <= todayIso
+        ? defaultFechaCierre
+        : todayIso,
+    },
   })
 
   const parteObjetoValue = watch('parte_objeto') ?? null
   const causaValue = watch('causa') ?? null
+  const tecnicoIdValue = watch('tecnico_id')
+  const fechaCierreValue = watch('fecha_cierre') ?? todayIso
+
+  useEffect(() => {
+    if (typeof defaultAviso === 'number') {
+      setValue('aviso', defaultAviso)
+    }
+  }, [defaultAviso, setValue])
+
+  useEffect(() => {
+    if (defaultTecnicoId) {
+      setValue('tecnico_id', defaultTecnicoId)
+    }
+  }, [defaultTecnicoId, setValue])
+
+  useEffect(() => {
+    if (typeof defaultCostoTotal === 'number') {
+      setValue('costo_total', defaultCostoTotal)
+    }
+  }, [defaultCostoTotal, setValue])
+
+  useEffect(() => {
+    if (defaultFechaCierre && defaultFechaCierre <= todayIso) {
+      setValue('fecha_cierre', defaultFechaCierre)
+    }
+  }, [defaultFechaCierre, setValue, todayIso])
 
   useEffect(() => {
     if (!onDraftChange) return
@@ -86,7 +122,7 @@ export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: P
     return () => subscription.unsubscribe()
   }, [watch, onDraftChange])
 
-  const handleCierreSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleCierreSubmit = (event: FormEvent<HTMLFormElement>) => {
     // Evita que el submit del popup dispare también el submit del formulario padre.
     event.stopPropagation()
     void handleSubmit(onSubmit)(event)
@@ -98,15 +134,37 @@ export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: P
 
       {/* Aviso SAP */}
       <div className="space-y-1.5">
-        <Label htmlFor="aviso">Aviso SAP</Label>
+        <Label htmlFor="aviso">Aviso SAP *</Label>
         <Input
           id="aviso"
           type="number"
           {...register('aviso', {
-            setValueAs: (value: string) => (value === '' ? null : Number(value)),
+            setValueAs: (value: string) => (value === '' ? undefined : Number(value)),
           })}
           placeholder="Número de aviso"
         />
+        {errors.aviso && (
+          <p className="text-xs text-destructive">{errors.aviso.message}</p>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="fecha_cierre">Fecha cierre / reporte *</Label>
+        <input type="hidden" {...register('fecha_cierre')} />
+        <DatePickerInput
+          value={fechaCierreValue}
+          onChange={(value) =>
+            setValue('fecha_cierre', value ?? todayIso, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }
+          placeholder="Fecha cierre"
+          maxDate={todayIso}
+        />
+        {errors.fecha_cierre && (
+          <p className="text-xs text-destructive">{errors.fecha_cierre.message}</p>
+        )}
       </div>
 
       {/* Parte objeto + Causa */}
@@ -153,7 +211,15 @@ export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: P
       {/* Técnico */}
       <div className="space-y-1.5">
         <Label>Técnico que realizó el servicio *</Label>
-        <Select onValueChange={(v) => setValue('tecnico_id', v)}>
+        <Select
+          value={tecnicoIdValue ?? undefined}
+          onValueChange={(v) =>
+            setValue('tecnico_id', v, {
+              shouldDirty: true,
+              shouldValidate: true,
+            })
+          }
+        >
           <SelectTrigger>
             <SelectValue placeholder="Seleccionar técnico…" />
           </SelectTrigger>
@@ -187,7 +253,7 @@ export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: P
 
       {/* Costo total */}
       <div className="space-y-1.5">
-        <Label htmlFor="costo_total">Costo total (MXN)</Label>
+        <Label htmlFor="costo_total">Costo reportado (MXN)</Label>
         <Input
           id="costo_total"
           type="number"
@@ -197,7 +263,6 @@ export function CierreForm({ servicioId, onSubmit, isLoading, onDraftChange }: P
           })}
           placeholder="0.00"
         />
-        <p className="text-xs text-ran-slate">Se puede dejar en blanco — se calculará del servicio</p>
       </div>
 
       {/* Firma receptor */}

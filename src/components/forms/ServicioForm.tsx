@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Camera, FileText, ImagePlus, Plus, Trash2, UploadCloud } from 'lucide-react'
@@ -15,10 +14,13 @@ import {
 } from '@/components/ui/select'
 import { crearServicioSchema, type CrearServicioInput } from '@/schemas/servicio.schema'
 import { useTecnicosQuery } from '@/hooks/use-tecnicos'
-import { useMaquinasQuery } from '@/hooks/use-maquinas'
-import { useClientesQuery } from '@/hooks/use-clientes'
-import { useCrearClienteMutation } from '@/hooks/use-clientes'
-import { useCrearMaquinaMutation } from '@/hooks/use-maquinas'
+import {
+  useCrearMaquinaMutation,
+  useDescartarMaquinaPendienteInstalacionMutation,
+  useMaquinasQuery,
+} from '@/hooks/use-maquinas'
+import { useMaquinasEnTallerQuery } from '@/hooks/use-maquinas-taller'
+import { useClientesQuery, useCrearClienteMutation } from '@/hooks/use-clientes'
 import { useServiciosQuery } from '@/hooks/use-servicios'
 import { formatMXN } from '@/lib/utils'
 import {
@@ -45,16 +47,19 @@ import {
   useEliminarEvidenciaMutation,
 } from '@/hooks/use-evidencias'
 import { ClienteCombobox } from './ClienteCombobox'
-import type { Servicio, Cliente, Cierre, Evidencia } from '@/types/domain.types'
+import type { Servicio, Cliente, Cierre, Evidencia, Maquina } from '@/types/domain.types'
 
 interface Props {
   defaultValues?: Partial<CrearServicioInput>
   onSubmit: (data: CrearServicioInput) => void
   onDraftChange?: (draft: Partial<CrearServicioInput> | null) => void
+  onCreateClienteRequest?: (draft: Partial<CrearServicioInput>) => void
+  onBeforeOpenCierre?: (data: CrearServicioInput) => boolean | Promise<boolean>
   clearDraftSignal?: number
   refaccionesContent?: ReactNode
   cierreContent?: ReactNode
   canShowCierre?: boolean
+  cierreHelpText?: string
   cierre?: Cierre | null
   isLoading?: boolean
   servicio?: Servicio
@@ -76,6 +81,24 @@ function buildTaggedFile(file: File, prefix: 'ev-foto' | 'orden-servicio'): File
   return new File([file], taggedName, { type: file.type })
 }
 
+function sanitizePositiveIntegerInput(value: string): string {
+  return value.replace(/\D+/g, '')
+}
+
+function parsePositiveIntegerField(value: unknown): number | undefined {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : undefined
+  }
+
+  if (typeof value === 'string') {
+    const normalized = sanitizePositiveIntegerInput(value)
+    if (!normalized) return undefined
+    return Number(normalized)
+  }
+
+  return undefined
+}
+
 function getDisplayFilename(filename: string): string {
   const parts = filename.split('__')
   if (parts.length >= 3) {
@@ -91,17 +114,85 @@ function formatLocalIsoDate(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-const DEFAULT_TIPOS_SERVICIO = [
+function compareMaquinasByModeloSerie(left: Maquina, right: Maquina): number {
+  const modelCompare = left.modelo.localeCompare(right.modelo, 'es', { sensitivity: 'base' })
+  if (modelCompare !== 0) return modelCompare
+  return left.serie.localeCompare(right.serie, 'es', { sensitivity: 'base' })
+}
+
+function isServicioInstalacionActivo(status: Servicio['status']): boolean {
+  return status === 'pendiente' || status === 'en_ruta'
+}
+
+function isTipoServicioMaquinaHielo(tipoServicio: string): boolean {
+  return tipoServicio.trim().toUpperCase().includes('MAQUINA HIELO')
+}
+
+const EXCLUDED_LEGACY_TIPOS_SERVICIO = new Set([
   'MTTO CORRECTIVO RUTA',
   'MTTO CORRECTIVO PISO',
   'MTTO PREVENTIVO RUTA',
   'INSTALACION',
   'RETIRO',
+  'ENVIO A URBAN',
   'GARANTIA',
+])
+
+function isExcludedLegacyTipoServicio(tipoServicio: string): boolean {
+  return EXCLUDED_LEGACY_TIPOS_SERVICIO.has(tipoServicio.trim().toUpperCase())
+}
+
+function mergeUniqueMaquinas(maquinas: Array<Maquina | null | undefined>): Maquina[] {
+  const unique = new Map<number, Maquina>()
+
+  for (const maquina of maquinas) {
+    if (!maquina) continue
+    unique.set(maquina.id, maquina)
+  }
+
+  return Array.from(unique.values()).sort(compareMaquinasByModeloSerie)
+}
+
+function sanitizeCurrencyInput(value: string): string {
+  const normalized = value.replace(/[^0-9.]/g, '')
+  if (!normalized) return ''
+
+  const firstDot = normalized.indexOf('.')
+  if (firstDot === -1) return normalized
+
+  const rawIntegerPart = normalized.slice(0, firstDot)
+  const integerPart = rawIntegerPart.length ? rawIntegerPart : '0'
+  const decimalRaw = normalized.slice(firstDot + 1).replace(/\./g, '')
+  const hasTrailingDot = normalized.endsWith('.') && decimalRaw.length === 0
+  const decimalPart = decimalRaw.slice(0, 2)
+
+  if (hasTrailingDot) return `${integerPart}.`
+  return decimalPart.length ? `${integerPart}.${decimalPart}` : integerPart
+}
+
+function formatCurrencyForInput(value: number): string {
+  const safeValue = Number.isFinite(value) ? value : 0
+  return new Intl.NumberFormat('es-MX', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(safeValue)
+}
+
+function formatCurrencyForEditing(value: number): string {
+  const safeValue = Number.isFinite(value) ? value : 0
+  return safeValue.toFixed(2)
+}
+
+const DEFAULT_TIPOS_SERVICIO = [
+  'MTTO CORRECTIVO PISO - MAQUINA HIELO',
+  'MTTO PREVENTIVO RUTA - MAQUINA HIELO',
+  'INSTALACION - MAQUINA HIELO',
+  'RETIRO - MAQUINA HIELO',
+  'FLETE MOV GZ - MAQUINA HIELO',
 ]
 
 const DEFAULT_CLASES_ORDEN = ['ZSM1', 'ZSI2']
-const COSTO_MANO_OBRA_DEFAULT = 648
+const COSTO_MANO_OBRA_DEFAULT = 0
 
 interface TipoServicioDefaults {
   clase_orden: string | null
@@ -156,6 +247,7 @@ function EvidenciaThumbnail({
   const { data } = useEvidenciaUrlQuery(evidencia.r2_key)
   const downloadUrl = data?.downloadUrl
   const displayFilename = getDisplayFilename(evidencia.filename)
+  const isOrdenServicio = isOrdenServicioFilename(evidencia.filename)
 
   return (
     <div className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -172,8 +264,13 @@ function EvidenciaThumbnail({
           {downloadUrl ? (
             <img src={downloadUrl} alt={displayFilename} className="h-full w-full object-cover" />
           ) : (
-            <div className="flex h-full w-full items-center justify-center">
-              <Camera className="h-5 w-5 text-slate-400" />
+            <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-3 text-center">
+              {isOrdenServicio ? (
+                <FileText className="h-5 w-5 text-slate-400" />
+              ) : (
+                <Camera className="h-5 w-5 text-slate-400" />
+              )}
+              <p className="text-[11px] font-medium text-slate-500">Solo metadatos offline</p>
             </div>
           )}
           <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors group-hover:bg-black/10" />
@@ -205,10 +302,13 @@ export function ServicioForm({
   defaultValues,
   onSubmit,
   onDraftChange,
+  onCreateClienteRequest,
+  onBeforeOpenCierre,
   clearDraftSignal,
   refaccionesContent,
   cierreContent,
   canShowCierre = false,
+  cierreHelpText,
   cierre,
   isLoading,
   servicio,
@@ -220,12 +320,19 @@ export function ServicioForm({
   const [openClienteModal, setOpenClienteModal] = useState(false)
   const [openMaquinaModal, setOpenMaquinaModal] = useState(false)
   const [openCierreDialog, setOpenCierreDialog] = useState(false)
+  const [costoDisplayValue, setCostoDisplayValue] = useState('')
+  const [isCostoFocused, setIsCostoFocused] = useState(false)
+  const [ultimaMaquinaCreada, setUltimaMaquinaCreada] = useState<Maquina | null>(null)
+  const [maquinasTemporalesInstalacionIds, setMaquinasTemporalesInstalacionIds] = useState<number[]>([])
+  const [dismissedInstallationMachineIds, setDismissedInstallationMachineIds] = useState<number[]>([])
   const [previewEvidencia, setPreviewEvidencia] = useState<EvidenciaPreview | null>(null)
   const [evidenciaAEliminar, setEvidenciaAEliminar] = useState<Evidencia | null>(null)
   const { toast } = useToast()
   const evidenciaFotosInputRef = useRef<HTMLInputElement>(null)
   const evidenciaOrdenInputRef = useRef<HTMLInputElement>(null)
   const ultimoDefaultTipoRef = useRef<TipoServicioDefaults | null>(null)
+  const previousIsInstalacionRef = useRef<boolean | null>(null)
+  const lastServicioFormResetKeyRef = useRef<string | null>(null)
   const todayIso = formatLocalIsoDate(new Date())
 
   const {
@@ -236,15 +343,15 @@ export function ServicioForm({
     setValue,
     reset,
     setError,
+    trigger,
     clearErrors,
     formState: { errors, isDirty },
   } = useForm<CrearServicioInput>({
     resolver: zodResolver(crearServicioSchema),
     defaultValues: {
-      tipo_servicio: 'MTTO CORRECTIVO RUTA',
-      clase_orden: 'ZSM1',
-      costo_mano_obra: COSTO_MANO_OBRA_DEFAULT,
-      fecha_solicitud: new Date().toISOString().split('T')[0],
+      tipo_servicio: '',
+      costo_mano_obra: 0,
+      fecha_solicitud: todayIso,
       ...defaultValues,
       ...(servicio
         ? {
@@ -270,16 +377,24 @@ export function ServicioForm({
   const claseOrdenValue = watch('clase_orden') ?? null
   const costoManoObra = watch('costo_mano_obra') ?? 0
   const tecnicoSeleccionado = watch('tecnico_id')
-  const fechaServicioCapturada = watch('fecha_servicio')
+  const fechaSolicitudCapturada = watch('fecha_solicitud') ?? null
+  const fechaServicioCapturada = watch('fecha_servicio') ?? null
   const isInstalacion = tipoServicioValue.trim().toUpperCase().includes('INSTALACION')
+  const wasOriginalInstalacion = Boolean(servicio?.tipo_servicio?.trim().toUpperCase().includes('INSTALACION'))
+  const maxFechaSolicitud = fechaServicioCapturada && fechaServicioCapturada < todayIso
+    ? fechaServicioCapturada
+    : todayIso
+  const minFechaServicio = fechaSolicitudCapturada ?? undefined
 
   const { data: tecnicos = [] } = useTecnicosQuery()
   const { data: clientes = [] } = useClientesQuery()
   const { data: maquinas = [] } = useMaquinasQuery(clienteId)
   const { data: maquinasCatalogo = [] } = useMaquinasQuery()
+  const { data: maquinasTallerAbiertas = [] } = useMaquinasEnTallerQuery({ soloAbiertas: true })
   const { data: serviciosRegistrados = [] } = useServiciosQuery()
   const { mutateAsync: crearCliente, isPending: isCreatingCliente } = useCrearClienteMutation()
   const { mutateAsync: crearMaquina, isPending: isCreatingMaquina } = useCrearMaquinaMutation()
+  const { mutateAsync: descartarMaquinaPendienteInstalacion } = useDescartarMaquinaPendienteInstalacionMutation()
   const servicioId = servicio?.id ?? 0
   const { data: evidencias = [], isLoading: loadingEvidencias } = useEvidenciasQuery(servicioId, Boolean(servicio?.id))
   const { mutateAsync: subirEvidenciaAsync, isPending: subiendoEvidencia } = useSubirEvidenciaMutation(servicioId)
@@ -302,7 +417,7 @@ export function ServicioForm({
     resolver: zodResolver(crearMaquinaSchema),
     defaultValues: {
       serie: '',
-      modelo: 'KM901',
+      modelo: '',
       cliente_id: null,
       fecha_instalacion: null,
       status: 'operando',
@@ -312,19 +427,107 @@ export function ServicioForm({
   })
 
   const selectedCliente = clientes.find((cliente) => cliente.id === clienteId)
-  const selectedMaquina = maquinas.find((maquina) => maquina.id === maquinaId)
+  const maquinasReservadasInstalacionIds = useMemo(() => {
+    return new Set(
+      serviciosRegistrados
+        .filter((servicioRegistrado) => servicioRegistrado.id !== servicio?.id)
+        .filter((servicioRegistrado) => isServicioInstalacionActivo(servicioRegistrado.status))
+        .filter((servicioRegistrado) => servicioRegistrado.tipo_servicio.trim().toUpperCase().includes('INSTALACION'))
+        .map((servicioRegistrado) => servicioRegistrado.maquina_id)
+        .filter((maquinaRegistradaId): maquinaRegistradaId is number => typeof maquinaRegistradaId === 'number'),
+    )
+  }, [servicio?.id, serviciosRegistrados])
+
+  const maquinasInstalables = useMemo(() => {
+    const maquinasDisponiblesEnTaller = maquinasTallerAbiertas
+      .filter((registro) => !maquinasReservadasInstalacionIds.has(registro.maquina_id))
+      .map((registro) => {
+        if (registro.maquina) return registro.maquina
+        return maquinasCatalogo.find((maquinaCatalogo) => maquinaCatalogo.id === registro.maquina_id) ?? null
+      })
+
+    return mergeUniqueMaquinas(maquinasDisponiblesEnTaller)
+  }, [maquinasCatalogo, maquinasReservadasInstalacionIds, maquinasTallerAbiertas])
+
+  const maquinasClienteOperativas = useMemo(
+    () => maquinas.filter((maquina) => maquina.status === 'operando'),
+    [maquinas],
+  )
+
+  const maquinasDisponiblesBase = isInstalacion ? maquinasInstalables : maquinasClienteOperativas
+  const dismissedInstallationMachineIdsSet = useMemo(
+    () => new Set(dismissedInstallationMachineIds),
+    [dismissedInstallationMachineIds],
+  )
+  const currentServiceMachineId = useMemo(() => {
+    if (typeof servicio?.maquina_id !== 'number') return null
+
+    if (isInstalacion) {
+      if (
+        wasOriginalInstalacion
+        && !dismissedInstallationMachineIdsSet.has(servicio.maquina_id)
+      ) {
+        return servicio.maquina_id
+      }
+
+      return null
+    }
+
+    return wasOriginalInstalacion ? null : servicio.maquina_id
+  }, [dismissedInstallationMachineIdsSet, isInstalacion, servicio?.maquina_id, wasOriginalInstalacion])
+
+  const maquinasDisponibles = useMemo(() => {
+    const extras: Array<Maquina | null | undefined> = []
+
+    if (currentServiceMachineId === servicio?.maquina?.id) {
+      extras.push(servicio.maquina)
+    } else if (typeof currentServiceMachineId === 'number') {
+      extras.push(maquinasCatalogo.find((maquinaCatalogo) => maquinaCatalogo.id === currentServiceMachineId) ?? null)
+    }
+
+    if (
+      ultimaMaquinaCreada
+      && !dismissedInstallationMachineIdsSet.has(ultimaMaquinaCreada.id)
+      && (isInstalacion || !clienteId || ultimaMaquinaCreada.cliente_id === clienteId)
+    ) {
+      extras.push(ultimaMaquinaCreada)
+    }
+
+    return mergeUniqueMaquinas([...maquinasDisponiblesBase, ...extras])
+  }, [
+    clienteId,
+    currentServiceMachineId,
+    dismissedInstallationMachineIdsSet,
+    isInstalacion,
+    maquinasCatalogo,
+    maquinasDisponiblesBase,
+    servicio?.maquina,
+    ultimaMaquinaCreada,
+  ])
+  const maquinasDisponiblesIds = useMemo(
+    () => new Set(maquinasDisponibles.map((maquina) => maquina.id)),
+    [maquinasDisponibles],
+  )
+  const selectedMaquina = maquinasDisponibles.find((maquina) => maquina.id === maquinaId)
     ?? maquinasCatalogo.find((maquina) => maquina.id === maquinaId)
-  const maquinasDisponibles = isInstalacion ? maquinasCatalogo : maquinas
+    ?? (ultimaMaquinaCreada?.id === maquinaId ? ultimaMaquinaCreada : undefined)
   const tiposServicioOptions = Array.from(
     new Set(
       [
         ...DEFAULT_TIPOS_SERVICIO,
+        tipoServicioValue.trim(),
         ...serviciosRegistrados
           .map((servicio) => servicio.tipo_servicio?.trim())
           .filter((tipo): tipo is string => Boolean(tipo)),
       ],
     ),
   )
+    .filter((tipo) => {
+      if (!tipo) return false
+      if (tipo === tipoServicioValue.trim()) return true
+      if (isTipoServicioMaquinaHielo(tipo)) return true
+      return !isExcludedLegacyTipoServicio(tipo)
+    })
     .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
 
   const clasesOrdenOptions = Array.from(
@@ -342,6 +545,7 @@ export function ServicioForm({
   const modelosMaquinaOptions = Array.from(
     new Set(maquinasCatalogo.map((maquina) => maquina.modelo).filter(Boolean)),
   )
+    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
 
   const evidenciaOrden = useMemo(
     () =>
@@ -363,7 +567,15 @@ export function ServicioForm({
 
   // Sincronizar formulario cuando llegan datos actualizados del servidor
   useEffect(() => {
-    if (!servicio) return
+    if (!servicio) {
+      lastServicioFormResetKeyRef.current = null
+      return
+    }
+
+    const resetKey = `${servicio.id}:${servicio.updated_at ?? ''}`
+    if (lastServicioFormResetKeyRef.current === resetKey) return
+
+    lastServicioFormResetKeyRef.current = resetKey
     reset({
       tipo_servicio: servicio.tipo_servicio,
       clase_orden: servicio.clase_orden ?? undefined,
@@ -377,8 +589,7 @@ export function ServicioForm({
       orden: servicio.orden ?? undefined,
       aviso: servicio.aviso ?? undefined,
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [servicio?.updated_at])
+  }, [reset, servicio])
 
   // Reset maquina_id cuando cambia el cliente
   useEffect(() => {
@@ -392,7 +603,7 @@ export function ServicioForm({
 
     const defaults = getTipoServicioDefaults(tipoServicioValue)
     const previousDefaults = ultimoDefaultTipoRef.current
-    const claseActual = (getValues('clase_orden') ?? null) as string | null
+    const claseActual = (getValues('clase_orden') ?? null)
     const costoActual = getValues('costo_mano_obra') ?? 0
 
     if (
@@ -420,18 +631,126 @@ export function ServicioForm({
 
   useEffect(() => {
     if (openMaquinaModal && clienteId) {
-      maquinaModalForm.setValue('cliente_id', clienteId)
+      maquinaModalForm.setValue('cliente_id', isInstalacion ? null : clienteId)
     }
-  }, [clienteId, maquinaModalForm, openMaquinaModal])
+  }, [clienteId, isInstalacion, maquinaModalForm, openMaquinaModal])
 
   useEffect(() => {
-    onDraftChange?.(isDirty ? ({} as Partial<CrearServicioInput>) : null)
+    if (!ultimaMaquinaCreada) return
+    if (!isInstalacion && clienteId && ultimaMaquinaCreada.cliente_id !== clienteId) {
+      setUltimaMaquinaCreada(null)
+    }
+  }, [clienteId, isInstalacion, ultimaMaquinaCreada])
+
+  useEffect(() => {
+    const previousIsInstalacion = previousIsInstalacionRef.current
+    const selectedMachineId = getValues('maquina_id')
+
+    if (previousIsInstalacion === null) {
+      previousIsInstalacionRef.current = isInstalacion
+      return
+    }
+
+    if (previousIsInstalacion && !isInstalacion) {
+      if (maquinasTemporalesInstalacionIds.length > 0) {
+        void Promise.all(
+          maquinasTemporalesInstalacionIds.map((machineId) => descartarMaquinaPendienteInstalacion(machineId)),
+        ).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : 'No se pudo descartar la máquina temporal.'
+          toast({
+            title: 'Máquina temporal no descartada',
+            description: message,
+            variant: 'destructive',
+          })
+        })
+
+        setDismissedInstallationMachineIds((current) => {
+          const next = new Set(current)
+          maquinasTemporalesInstalacionIds.forEach((machineId) => next.add(machineId))
+          return Array.from(next)
+        })
+        setMaquinasTemporalesInstalacionIds([])
+      }
+
+      if (typeof selectedMachineId === 'number' && Number.isFinite(selectedMachineId)) {
+        if (
+          ultimaMaquinaCreada?.id === selectedMachineId
+          && !maquinasTemporalesInstalacionIds.includes(selectedMachineId)
+        ) {
+          void descartarMaquinaPendienteInstalacion(selectedMachineId).catch((error: unknown) => {
+            const message = error instanceof Error ? error.message : 'No se pudo descartar la máquina temporal.'
+            toast({
+              title: 'Máquina temporal no descartada',
+              description: message,
+              variant: 'destructive',
+            })
+          })
+        }
+
+        setDismissedInstallationMachineIds((current) => (
+          current.includes(selectedMachineId) ? current : [...current, selectedMachineId]
+        ))
+        setValue('maquina_id', undefined as unknown as number, {
+          shouldValidate: true,
+          shouldDirty: true,
+        })
+        setUltimaMaquinaCreada((current) => (
+          current?.id === selectedMachineId ? null : current
+        ))
+      }
+    }
+
+    if (!previousIsInstalacion && isInstalacion) {
+      if (typeof selectedMachineId === 'number' && selectedMachineId > 0) {
+        setValue('maquina_id', undefined as unknown as number, {
+          shouldValidate: true,
+          shouldDirty: true,
+        })
+      }
+    }
+
+    previousIsInstalacionRef.current = isInstalacion
+  }, [
+    descartarMaquinaPendienteInstalacion,
+    getValues,
+    isInstalacion,
+    maquinasTemporalesInstalacionIds,
+    setValue,
+    toast,
+    ultimaMaquinaCreada?.id,
+  ])
+
+  useEffect(() => {
+    if (!maquinaId) return
+    if (currentServiceMachineId != null && maquinaId === currentServiceMachineId) return
+    if (maquinasDisponiblesIds.has(maquinaId)) return
+
+    setValue('maquina_id', undefined as unknown as number, {
+      shouldValidate: true,
+      shouldDirty: true,
+    })
+  }, [currentServiceMachineId, maquinaId, maquinasDisponiblesIds, setValue])
+
+  useEffect(() => {
+    onDraftChange?.(isDirty ? ({}) : null)
   }, [isDirty, onDraftChange])
 
   useEffect(() => {
     if (clearDraftSignal === undefined) return
     reset(getValues())
   }, [clearDraftSignal, getValues, reset])
+
+  const handleOpenCierreClick = () => {
+    void handleSubmit(async (data) => {
+      const shouldOpen = onBeforeOpenCierre
+        ? await onBeforeOpenCierre(data)
+        : true
+
+      if (shouldOpen) {
+        setOpenCierreDialog(true)
+      }
+    })()
+  }
 
   useEffect(() => {
     if (tecnicoSeleccionado) {
@@ -440,13 +759,30 @@ export function ServicioForm({
   }, [tecnicoSeleccionado, clearErrors])
 
   useEffect(() => {
-    if (fechaServicioCapturada) {
-      clearErrors('fecha_servicio')
+    if (isCostoFocused) return
+    setCostoDisplayValue(formatCurrencyForInput(costoManoObra))
+  }, [costoManoObra, isCostoFocused])
+
+  useEffect(() => {
+    if (!fechaSolicitudCapturada && !fechaServicioCapturada) {
+      clearErrors(['fecha_solicitud', 'fecha_servicio'])
+      return
     }
-  }, [fechaServicioCapturada, clearErrors])
+
+    void trigger(['fecha_solicitud', 'fecha_servicio'])
+  }, [clearErrors, fechaServicioCapturada, fechaSolicitudCapturada, trigger])
 
   const handleFormSubmit = handleSubmit((data) => {
     let hasManualValidationError = false
+    const resolvedMachineId = typeof data.maquina_id === 'number' ? data.maquina_id : currentServiceMachineId
+
+    if (typeof resolvedMachineId !== 'number' || resolvedMachineId <= 0) {
+      setError('maquina_id', {
+        type: 'manual',
+        message: 'Selecciona una máquina.',
+      })
+      hasManualValidationError = true
+    }
 
     if (requireTecnicoParaEnRuta && !data.tecnico_id) {
       setError('tecnico_id', {
@@ -464,6 +800,19 @@ export function ServicioForm({
       hasManualValidationError = true
     }
 
+    if (
+      isInstalacion
+      && typeof data.maquina_id === 'number'
+      && !maquinasDisponiblesIds.has(data.maquina_id)
+      && data.maquina_id !== currentServiceMachineId
+    ) {
+      setError('maquina_id', {
+        type: 'manual',
+        message: 'Para una instalación solo puedes elegir una máquina disponible en taller o registrarla manualmente.',
+      })
+      hasManualValidationError = true
+    }
+
     if (hasManualValidationError) return
 
     onSubmit(data)
@@ -475,6 +824,27 @@ export function ServicioForm({
       setValue('maquina_id', undefined as unknown as number, { shouldValidate: true, shouldDirty: true })
     }
     void cliente
+  }
+
+  const handleCostoChange = (value: string) => {
+    const sanitized = sanitizeCurrencyInput(value)
+    const parsed = sanitized === '' || sanitized === '.' ? 0 : Number(sanitized)
+    const safeValue = Number.isFinite(parsed) ? parsed : 0
+
+    setCostoDisplayValue(sanitized)
+    setValue('costo_mano_obra', safeValue, {
+      shouldValidate: true,
+      shouldDirty: true,
+    })
+  }
+
+  const handleRequestCrearCliente = () => {
+    if (onCreateClienteRequest) {
+      onCreateClienteRequest(getValues())
+      return
+    }
+
+    setOpenClienteModal(true)
   }
 
   const handleCrearCliente = clienteModalForm.handleSubmit(async (values) => {
@@ -516,27 +886,37 @@ export function ServicioForm({
     }
 
     try {
+      const creandoParaInstalacion = isInstalacion
       const created = await crearMaquina({
         ...values,
-        cliente_id: clienteId,
-        fecha_instalacion: values.fecha_instalacion || null,
+        cliente_id: creandoParaInstalacion ? null : clienteId,
+        fecha_instalacion: creandoParaInstalacion ? null : values.fecha_instalacion || null,
+        status: creandoParaInstalacion ? 'en_taller' : 'operando',
         observaciones: values.observaciones || null,
       })
 
+      setUltimaMaquinaCreada(created)
+      if (creandoParaInstalacion) {
+        setMaquinasTemporalesInstalacionIds((current) => (
+          current.includes(created.id) ? current : [...current, created.id]
+        ))
+      }
       setValue('maquina_id', created.id, { shouldValidate: true, shouldDirty: true })
       setOpenMaquinaModal(false)
       maquinaModalForm.reset({
         serie: '',
-        modelo: 'KM901',
-        cliente_id: clienteId,
+        modelo: '',
+        cliente_id: creandoParaInstalacion ? null : clienteId,
         fecha_instalacion: null,
-        status: 'operando',
+        status: creandoParaInstalacion ? 'en_taller' : 'operando',
         observaciones: null,
         activo: true,
       })
       toast({
         title: 'Máquina creada',
-        description: `Serie ${created.serie} registrada para ${selectedCliente?.nombre ?? 'el cliente seleccionado'}.`,
+        description: creandoParaInstalacion
+          ? `Serie ${created.serie} registrada como pendiente de instalación para ${selectedCliente?.nombre ?? 'el cliente seleccionado'}.`
+          : `Serie ${created.serie} registrada para ${selectedCliente?.nombre ?? 'el cliente seleccionado'}.`,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo crear la máquina.'
@@ -593,9 +973,16 @@ export function ServicioForm({
 
     try {
       await eliminarEvidenciaAsync(evidenciaAEliminar.id)
+      if (previewEvidencia?.filename === getDisplayFilename(evidenciaAEliminar.filename)) {
+        setPreviewEvidencia(null)
+      }
       toast({
-        title: 'Evidencia eliminada',
-        description: 'La imagen fue eliminada correctamente.',
+        title: isOrdenServicioFilename(evidenciaAEliminar.filename)
+          ? 'Orden de servicio eliminada'
+          : 'Evidencia eliminada',
+        description: isOrdenServicioFilename(evidenciaAEliminar.filename)
+          ? 'La hoja de orden fue eliminada correctamente.'
+          : 'La imagen fue eliminada correctamente.',
       })
       setEvidenciaAEliminar(null)
     } catch (error) {
@@ -608,19 +995,27 @@ export function ServicioForm({
     }
   }
 
+  const avisoField = register('aviso', {
+    setValueAs: parsePositiveIntegerField,
+  })
+
+  const ordenField = register('orden', {
+    setValueAs: parsePositiveIntegerField,
+  })
+
   return (
     <form id={formId} onSubmit={handleFormSubmit} className="space-y-3">
-      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[1.05fr_1fr]">
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-2 xl:items-stretch">
+        <section className="h-full rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-lg font-bold text-ran-navy">Información del servicio</h3>
           <p className="mt-1 text-sm text-ran-slate">Complete la información operativa y administrativa</p>
 
           <div className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div className="space-y-1.5">
-              <Label htmlFor="fecha_solicitud">Fecha solicitud</Label>
+              <Label htmlFor="fecha_solicitud">Fecha solicitud *</Label>
               <input type="hidden" {...register('fecha_solicitud')} />
               <DatePickerInput
-                value={watch('fecha_solicitud')}
+                value={fechaSolicitudCapturada}
                 onChange={(value) => {
                   const safeValue = value && value > todayIso ? todayIso : value
                   setValue('fecha_solicitud', safeValue ?? '', {
@@ -629,13 +1024,13 @@ export function ServicioForm({
                   })
                 }}
                 placeholder="Seleccionar fecha solicitud"
-                maxDate={todayIso}
+                maxDate={maxFechaSolicitud}
               />
               {errors.fecha_solicitud && <p className="text-xs text-destructive">{errors.fecha_solicitud.message}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="tipo_servicio">Tipo de servicio</Label>
+              <Label htmlFor="tipo_servicio">Tipo de servicio *</Label>
               <CreatableCombobox
                 value={tipoServicioValue}
                 options={tiposServicioOptions}
@@ -647,10 +1042,11 @@ export function ServicioForm({
                 }
                 placeholder="Seleccionar tipo"
                 searchPlaceholder="Escribe para buscar o crear tipo de servicio"
+                contentClassName="sm:w-[30rem] sm:max-w-[30rem]"
               />
               {errors.tipo_servicio && <p className="text-xs text-destructive">{errors.tipo_servicio.message}</p>}
               {!errors.tipo_servicio && (
-                <p className="text-xs text-ran-slate">Si no aparece en la lista, escríbelo para guardarlo en el flujo. Se sugiere automáticamente la clase de orden y mano de obra base.</p>
+                <p className="text-xs text-ran-slate">Si no aparece en la lista, escríbelo para guardarlo en el flujo.</p>
               )}
             </div>
 
@@ -676,27 +1072,37 @@ export function ServicioForm({
 
           <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="aviso">No. Aviso</Label>
+              <Label htmlFor="aviso">No. Aviso *</Label>
               <Input
                 id="aviso"
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="h-11 rounded-xl"
-                {...register('aviso', {
-                  setValueAs: (value: string) => (value === '' ? undefined : Number(value)),
-                })}
+                {...avisoField}
+                onChange={(event) => {
+                  event.target.value = sanitizePositiveIntegerInput(event.target.value)
+                  void avisoField.onChange(event)
+                }}
               />
+              {errors.aviso && <p className="text-xs text-destructive">{errors.aviso.message}</p>}
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="orden">No. Orden</Label>
+              <Label htmlFor="orden">No. Orden *</Label>
               <Input
                 id="orden"
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 className="h-11 rounded-xl"
-                {...register('orden', {
-                  setValueAs: (value: string) => (value === '' ? undefined : Number(value)),
-                })}
+                {...ordenField}
+                onChange={(event) => {
+                  event.target.value = sanitizePositiveIntegerInput(event.target.value)
+                  void ordenField.onChange(event)
+                }}
               />
+              {errors.orden && <p className="text-xs text-destructive">{errors.orden.message}</p>}
             </div>
           </div>
 
@@ -731,17 +1137,16 @@ export function ServicioForm({
               <Label htmlFor="fecha_servicio">Fecha servicio</Label>
               <input type="hidden" {...register('fecha_servicio')} />
               <DatePickerInput
-                value={watch('fecha_servicio')}
+                value={fechaServicioCapturada}
                 onChange={(value) => {
-                  const safeValue = value && value > todayIso ? todayIso : value
-                  setValue('fecha_servicio', safeValue, {
+                  setValue('fecha_servicio', value, {
                     shouldValidate: true,
                     shouldDirty: true,
                   })
                 }}
                 placeholder="Seleccionar fecha servicio"
                 allowClear
-                maxDate={todayIso}
+                minDate={minFechaServicio}
                 className={errors.fecha_servicio ? 'rounded-xl border border-destructive p-0.5' : undefined}
               />
               {errors.fecha_servicio && <p className="text-xs text-destructive">{errors.fecha_servicio.message}</p>}
@@ -762,20 +1167,37 @@ export function ServicioForm({
 
           <div className="mt-3 space-y-1.5">
             <Label htmlFor="costo_mano_obra">Costo del servicio</Label>
-            <Input
-              id="costo_mano_obra"
-              type="number"
-              step="0.01"
-              className="h-11 rounded-xl"
+            <input
+              type="hidden"
               {...register('costo_mano_obra', {
                 setValueAs: (value: string) => (value === '' ? 0 : Number(value)),
               })}
             />
+            <div className="relative">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-ran-slate">$</span>
+              <Input
+                id="costo_mano_obra"
+                type="text"
+                inputMode="decimal"
+                value={costoDisplayValue}
+                onChange={(event) => handleCostoChange(event.target.value)}
+                onFocus={() => {
+                  setIsCostoFocused(true)
+                  setCostoDisplayValue(formatCurrencyForEditing(costoManoObra))
+                }}
+                onBlur={() => {
+                  setIsCostoFocused(false)
+                  setCostoDisplayValue(formatCurrencyForInput(costoManoObra))
+                }}
+                placeholder="0.00"
+                className="h-11 rounded-xl pl-8"
+              />
+            </div>
           </div>
         </section>
 
-        <div className="space-y-3">
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex h-full flex-col gap-4">
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
               <h3 className="text-lg font-bold text-ran-navy">Cliente y máquina</h3>
@@ -783,20 +1205,29 @@ export function ServicioForm({
             </div>
           </div>
 
-          <div className="mt-5 space-y-3">
+          <div className="mt-6 space-y-4">
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label>Cliente</Label>
-                <Button type="button" variant="outline" size="sm" className="h-8 rounded-lg" onClick={() => setOpenClienteModal(true)}>
+              <div className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                <Label className="min-w-0 inline-flex items-center gap-1 leading-none">
+                  <span>Cliente</span>
+                  <span className="text-ran-navy">*</span>
+                </Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 min-w-fit justify-self-end whitespace-nowrap rounded-lg px-2.5 text-xs sm:px-3 sm:text-sm"
+                  onClick={handleRequestCrearCliente}
+                >
                   <Plus className="h-3.5 w-3.5" />
-                  Crear cliente
+                  <span>Crear cliente</span>
                 </Button>
               </div>
               <ClienteCombobox value={clienteId ?? null} onChange={handleClienteChange} />
               {errors.cliente_id && <p className="text-xs text-destructive">{errors.cliente_id.message}</p>}
             </div>
 
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="codigo_cliente">Código de cliente</Label>
                 <Input id="codigo_cliente" readOnly value={selectedCliente?.codigo_cliente ?? ''} placeholder="Se llena automáticamente" className="h-11 rounded-xl bg-slate-50" />
@@ -807,10 +1238,16 @@ export function ServicioForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.6fr_1fr]">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
               <div className="space-y-1.5">
                 <Label htmlFor="direccion_cliente">Dirección</Label>
-                <Input id="direccion_cliente" readOnly value={selectedCliente?.direccion ?? ''} placeholder="Se llena automáticamente" className="h-11 rounded-xl bg-slate-50" />
+                <Input
+                  id="direccion_cliente"
+                  readOnly
+                  value={selectedCliente?.direccion?.trim() ? selectedCliente.direccion : ''}
+                  placeholder={selectedCliente && !selectedCliente.direccion?.trim() ? 'Sin dirección registrada' : 'Se llena automáticamente'}
+                  className="h-11 rounded-xl bg-slate-50"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="telefono_cliente">Teléfono</Label>
@@ -818,20 +1255,25 @@ export function ServicioForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-[1fr_0.9fr]">
+            <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
               <div className="space-y-1.5">
-                <div className="flex min-h-8 items-center justify-between">
-                  <Label htmlFor="maquina_id">Modelo máquina</Label>
+                <div className="grid min-h-9 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
+                  <Label htmlFor="maquina_id" className="min-w-0 inline-flex items-center gap-1 leading-none">
+                    <span className="sm:hidden">Máquina</span>
+                    <span className="hidden sm:inline">Modelo máquina</span>
+                    <span className="text-ran-navy">*</span>
+                  </Label>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-8 rounded-lg"
+                    className="h-9 min-w-fit justify-self-end whitespace-nowrap rounded-lg px-2.5 text-xs sm:px-3 sm:text-sm"
                     onClick={() => setOpenMaquinaModal(true)}
                     disabled={!clienteId}
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Registrar máquina
+                    <span className="sm:hidden">Registrar</span>
+                    <span className="hidden sm:inline">Registrar máquina</span>
                   </Button>
                 </div>
                 <Select
@@ -840,20 +1282,22 @@ export function ServicioForm({
                   disabled={!isInstalacion && !clienteId}
                 >
                   <SelectTrigger id="maquina_id" className="h-11 rounded-xl">
-                    <SelectValue placeholder={isInstalacion ? 'Seleccionar máquina del catálogo' : clienteId ? 'Seleccionar máquina' : 'Selecciona cliente primero'} />
+                    <SelectValue placeholder={isInstalacion ? 'Seleccionar máquina de taller' : clienteId ? 'Seleccionar máquina' : 'Selecciona cliente primero'} />
                   </SelectTrigger>
-                  <SelectContent>
-                    {maquinasDisponibles.map((maquina) => (
-                      <SelectItem key={maquina.id} value={String(maquina.id)}>{maquina.modelo} | {maquina.serie}</SelectItem>
-                    ))}
+                  <SelectContent className="max-w-[20rem]">
+                    {maquinasDisponibles.length > 0 ? (
+                      maquinasDisponibles.map((maquina) => (
+                        <SelectItem key={maquina.id} value={String(maquina.id)}>{maquina.modelo}</SelectItem>
+                      ))
+                    ) : (
+                      <div className="max-w-[18rem] px-3 py-2 text-sm leading-snug text-ran-slate">
+                        {isInstalacion
+                          ? 'Sin máquinas listas en taller. Usa Registrar máquina.'
+                          : 'Cliente sin máquinas operando registradas. Usa Registrar máquina.'}
+                      </div>
+                    )}
                   </SelectContent>
                 </Select>
-                {isInstalacion && (
-                  <p className="text-xs text-ran-slate">Para instalaciones puedes elegir cualquier máquina activa, aunque esté asociada a otro cliente.</p>
-                )}
-                {!isInstalacion && clienteId && maquinasDisponibles.length === 0 && (
-                  <p className="text-xs text-ran-slate">Este cliente no tiene máquinas registradas. Usa el botón "Registrar máquina".</p>
-                )}
                 {errors.maquina_id && <p className="text-xs text-destructive">{errors.maquina_id.message}</p>}
               </div>
 
@@ -867,7 +1311,7 @@ export function ServicioForm({
           </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm py-5">
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             <h4 className="text-base font-bold text-ran-navy">Información de cierre</h4>
             <p className="mt-1 text-xs text-ran-slate">
               Completa el cierre al finalizar el servicio.
@@ -882,7 +1326,7 @@ export function ServicioForm({
                 <Button
                   type="button"
                   className="h-10 w-full rounded-xl bg-ran-navy text-sm hover:bg-ran-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => setOpenCierreDialog(true)}
+                  onClick={handleOpenCierreClick}
                   disabled={!canShowCierre || !cierreContent}
                 >
                   Abrir formulario de cierre
@@ -897,7 +1341,7 @@ export function ServicioForm({
                 >
                   {canShowCierre && cierreContent
                     ? 'Completa el formulario de cierre y da clic en "Cerrar servicio".'
-                    : 'Cambia el status a "Completado" para poder cerrar el servicio.'}
+                    : cierreHelpText ?? 'Cambia el status a "Completado" para poder cerrar el servicio.'}
                 </div>
               </div>
             )}
@@ -1104,8 +1548,8 @@ export function ServicioForm({
         description={
           evidenciaAEliminar
             ? isOrdenServicioFilename(evidenciaAEliminar.filename)
-              ? `Se eliminará la hoja de orden \"${getDisplayFilename(evidenciaAEliminar.filename)}\". Esta acción no se puede deshacer.`
-              : `Se eliminará la imagen \"${getDisplayFilename(evidenciaAEliminar.filename)}\". Esta acción no se puede deshacer.`
+              ? `Se eliminará la hoja de orden "${getDisplayFilename(evidenciaAEliminar.filename)}". Esta acción no se puede deshacer.`
+              : `Se eliminará la imagen "${getDisplayFilename(evidenciaAEliminar.filename)}". Esta acción no se puede deshacer.`
             : 'Esta acción no se puede deshacer.'
         }
         confirmLabel="Eliminar"
@@ -1127,15 +1571,25 @@ export function ServicioForm({
           <form onSubmit={handleCrearCliente} className="space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="nuevo_codigo_cliente">Código de cliente</Label>
-                <Input id="nuevo_codigo_cliente" {...clienteModalForm.register('codigo_cliente')} placeholder="Ej. 300831815" />
+                <Label htmlFor="nuevo_codigo_cliente">Código de cliente *</Label>
+                <Input
+                  id="nuevo_codigo_cliente"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="Ej. 300831815"
+                  {...clienteModalForm.register('codigo_cliente', {
+                    onChange: (event) => {
+                      event.target.value = sanitizePositiveIntegerInput(event.target.value)
+                    },
+                  })}
+                />
                 {clienteModalForm.formState.errors.codigo_cliente && (
                   <p className="text-xs text-destructive">{clienteModalForm.formState.errors.codigo_cliente.message}</p>
                 )}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="nuevo_nombre_cliente">Nombre</Label>
+                <Label htmlFor="nuevo_nombre_cliente">Nombre *</Label>
                 <Input id="nuevo_nombre_cliente" {...clienteModalForm.register('nombre')} placeholder="Tkt Six Centenario" />
                 {clienteModalForm.formState.errors.nombre && (
                   <p className="text-xs text-destructive">{clienteModalForm.formState.errors.nombre.message}</p>
@@ -1184,13 +1638,17 @@ export function ServicioForm({
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Registrar máquina</DialogTitle>
-            <DialogDescription>La máquina se registrará para el cliente seleccionado.</DialogDescription>
+            <DialogDescription>
+              {isInstalacion
+                ? 'La máquina quedará pendiente de instalación y solo se asignará al cliente al completar el servicio.'
+                : 'La máquina se registrará para el cliente seleccionado.'}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleCrearMaquina} className="space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
-                <Label htmlFor="nueva_serie_maquina">Serie</Label>
+                <Label htmlFor="nueva_serie_maquina">Serie *</Label>
                 <Input id="nueva_serie_maquina" {...maquinaModalForm.register('serie')} placeholder="Serie de la máquina" />
                 {maquinaModalForm.formState.errors.serie && (
                   <p className="text-xs text-destructive">{maquinaModalForm.formState.errors.serie.message}</p>
@@ -1198,12 +1656,12 @@ export function ServicioForm({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="nuevo_modelo_maquina">Modelo</Label>
+                <Label htmlFor="nuevo_modelo_maquina">Modelo *</Label>
                 <Input
                   id="nuevo_modelo_maquina"
                   list="modelos-maquina-list"
                   value={maquinaModalForm.watch('modelo') ?? ''}
-                  onChange={(event) => maquinaModalForm.setValue('modelo', event.target.value, { shouldValidate: true })}
+                  onChange={(event) => maquinaModalForm.setValue('modelo', event.target.value, { shouldValidate: true, shouldDirty: true })}
                   placeholder="Seleccionar o escribir modelo"
                 />
                 <datalist id="modelos-maquina-list">
@@ -1217,40 +1675,25 @@ export function ServicioForm({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="nueva_fecha_instalacion">Fecha de instalación</Label>
-                <input type="hidden" {...maquinaModalForm.register('fecha_instalacion')} />
-                <DatePickerInput
-                  value={maquinaModalForm.watch('fecha_instalacion')}
-                  onChange={(value) =>
-                    maquinaModalForm.setValue('fecha_instalacion', value, {
-                      shouldValidate: true,
-                      shouldDirty: true,
-                    })
-                  }
-                  placeholder="Seleccionar fecha de instalación"
-                  allowClear
-                />
+            {!isInstalacion && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="nueva_fecha_instalacion">Fecha de instalación</Label>
+                  <input type="hidden" {...maquinaModalForm.register('fecha_instalacion')} />
+                  <DatePickerInput
+                    value={maquinaModalForm.watch('fecha_instalacion')}
+                    onChange={(value) =>
+                      maquinaModalForm.setValue('fecha_instalacion', value, {
+                        shouldValidate: true,
+                        shouldDirty: true,
+                      })
+                    }
+                    placeholder="Seleccionar fecha de instalación"
+                    allowClear
+                  />
+                </div>
               </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="nuevo_status_maquina">Status</Label>
-                <Select
-                  value={maquinaModalForm.watch('status')}
-                  onValueChange={(value) => maquinaModalForm.setValue('status', value as CrearMaquinaInput['status'], { shouldValidate: true })}
-                >
-                  <SelectTrigger id="nuevo_status_maquina">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="operando">Operando</SelectItem>
-                    <SelectItem value="en_taller">En taller</SelectItem>
-                    <SelectItem value="baja">Baja</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="nueva_observaciones_maquina">Observaciones</Label>
@@ -1258,7 +1701,9 @@ export function ServicioForm({
             </div>
 
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-ran-slate">
-              Cliente actual: {selectedCliente?.nombre ?? 'Sin cliente seleccionado'}
+              {isInstalacion
+                ? `Cliente destino del servicio: ${selectedCliente?.nombre ?? 'Sin cliente seleccionado'}`
+                : `Cliente actual: ${selectedCliente?.nombre ?? 'Sin cliente seleccionado'}`}
             </div>
 
             <div className="flex justify-end gap-2 pt-1">

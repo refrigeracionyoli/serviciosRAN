@@ -1,43 +1,54 @@
-import { type ReactNode } from 'react'
+import { lazy, Suspense, type ReactNode } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router-dom'
+import {
+  TecnicoEvidenciaSkeleton,
+  TecnicoHomeSkeleton,
+  TecnicoInventarioSkeleton,
+  TecnicoPageLoadingSkeleton,
+  TecnicoPerfilSkeleton,
+  TecnicoRefaccionesSkeleton,
+  TecnicoServicioDetalleSkeleton,
+} from '@/components/shared/TecnicoSkeletons'
 import { useAuth } from '@/hooks/use-auth'
-import { LoadingSpinner } from '@/components/shared/LoadingSpinner'
+import { AdminDashboardSkeleton, AdminPageLoadingSkeleton } from '@/components/shared/AdminSkeletons'
+import { AuthLoader } from '@/components/shared/AuthLoader'
+import { LoginPage } from '@/pages/auth/LoginPage'
 
 // Layouts
 import { AppLayout } from '@/components/layout/AppLayout'
 import { MobileLayout } from '@/components/layout/MobileLayout'
 
-// Auth
-import { LoginPage } from '@/pages/auth/LoginPage'
-
-// Admin pages
-import { DashboardPage } from '@/pages/admin/DashboardPage'
-import { ServiciosPage } from '@/pages/admin/servicios/ServiciosPage'
-import { ServicioNuevoPage } from '@/pages/admin/servicios/ServicioNuevoPage'
-import { ServicioEditarPage } from '@/pages/admin/servicios/ServicioEditarPage'
-import { ServicioDetallePage } from '@/pages/admin/servicios/ServicioDetallePage'
-import { PolizasPage } from '@/pages/admin/polizas/PolizasPage'
-import { PolizaNuevaPage } from '@/pages/admin/polizas/PolizaNuevaPage'
-import { PolizaDetallePage } from '@/pages/admin/polizas/PolizaDetallePage'
-import { MantenimientosPage } from '@/pages/admin/polizas/MantenimientosPage'
-import { AsignarMantenimientoPage } from '@/pages/admin/polizas/AsignarMantenimientoPage'
-import { MantenimientoDetallePage } from '@/pages/admin/polizas/MantenimientoDetallePage'
-import { InventarioPage } from '@/pages/admin/inventario/InventarioPage'
-import { InventarioTecnicoPage } from '@/pages/admin/inventario/InventarioTecnicoPage'
-import { MovimientosPage } from '@/pages/admin/inventario/MovimientosPage'
-import { MaquinasTallerPage } from '@/pages/admin/maquinas-taller/MaquinasTallerPage'
-import { ReporteSemanalPage } from '@/pages/admin/reportes/ReporteSemanalPage'
-import { EvidenciaPage } from '@/pages/admin/reportes/EvidenciaPage'
-import { CatalogosPage } from '@/pages/admin/catalogos/CatalogosPage'
-import { TecnicosPage } from '@/pages/admin/catalogos/TecnicosPage'
-import { MaquinasPage } from '@/pages/admin/catalogos/MaquinasPage'
-import { MaquinaHistorialPage } from '@/pages/admin/catalogos/MaquinaHistorialPage'
-
-// Tecnico pages
-import { TecnicoHomePage } from '@/pages/tecnico/TecnicoHomePage'
-import { TecnicoEvidenciaPage } from '@/pages/tecnico/TecnicoEvidenciaPage'
-import { TecnicoInventarioPage } from '@/pages/tecnico/TecnicoInventarioPage'
-import { TecnicoRefaccionesPage } from '@/pages/tecnico/TecnicoRefaccionesPage'
+// Lazy pages
+const DashboardPage = lazy(() => import('@/pages/admin/DashboardPage').then((module) => ({ default: module.DashboardPage })))
+const ServiciosPage = lazy(() => import('@/pages/admin/servicios/ServiciosPage').then((module) => ({ default: module.ServiciosPage })))
+const ServicioNuevoPage = lazy(() => import('@/pages/admin/servicios/ServicioNuevoPage').then((module) => ({ default: module.ServicioNuevoPage })))
+const ServicioEditarPage = lazy(() => import('@/pages/admin/servicios/ServicioEditarPage').then((module) => ({ default: module.ServicioEditarPage })))
+const ServicioDetallePage = lazy(() => import('@/pages/admin/servicios/ServicioDetallePage').then((module) => ({ default: module.ServicioDetallePage })))
+const PolizasPage = lazy(() => import('@/pages/admin/polizas/PolizasPage').then((module) => ({ default: module.PolizasPage })))
+const PolizaNuevaPage = lazy(() => import('@/pages/admin/polizas/PolizaNuevaPage').then((module) => ({ default: module.PolizaNuevaPage })))
+const PolizaDetallePage = lazy(() => import('@/pages/admin/polizas/PolizaDetallePage').then((module) => ({ default: module.PolizaDetallePage })))
+const MantenimientosPage = lazy(() => import('@/pages/admin/polizas/MantenimientosPage').then((module) => ({ default: module.MantenimientosPage })))
+const AsignarMantenimientoPage = lazy(() => import('@/pages/admin/polizas/AsignarMantenimientoPage').then((module) => ({ default: module.AsignarMantenimientoPage })))
+const MantenimientoDetallePage = lazy(() => import('@/pages/admin/polizas/MantenimientoDetallePage').then((module) => ({ default: module.MantenimientoDetallePage })))
+const InventarioPage = lazy(() => import('@/pages/admin/inventario/InventarioPage').then((module) => ({ default: module.InventarioPage })))
+const InventarioTecnicoPage = lazy(() => import('@/pages/admin/inventario/InventarioTecnicoPage').then((module) => ({ default: module.InventarioTecnicoPage })))
+const MovimientosPage = lazy(() => import('@/pages/admin/inventario/MovimientosPage').then((module) => ({ default: module.MovimientosPage })))
+const MaquinasTallerPage = lazy(() => import('@/pages/admin/maquinas-taller/MaquinasTallerPage').then((module) => ({ default: module.MaquinasTallerPage })))
+const CatalogosPage = lazy(() => import('@/pages/admin/catalogos/CatalogosPage').then((module) => ({ default: module.CatalogosPage })))
+const ClienteNuevoPage = lazy(() => import('@/pages/admin/catalogos/ClienteNuevoPage').then((module) => ({ default: module.ClienteNuevoPage })))
+const ClienteDetallePage = lazy(() => import('@/pages/admin/catalogos/ClienteDetallePage').then((module) => ({ default: module.ClienteDetallePage })))
+const ClienteEditarPage = lazy(() => import('@/pages/admin/catalogos/ClienteEditarPage').then((module) => ({ default: module.ClienteEditarPage })))
+const TecnicosPage = lazy(() => import('@/pages/admin/catalogos/TecnicosPage').then((module) => ({ default: module.TecnicosPage })))
+const TecnicoNuevoPage = lazy(() => import('@/pages/admin/catalogos/TecnicoNuevoPage').then((module) => ({ default: module.TecnicoNuevoPage })))
+const MaquinasPage = lazy(() => import('@/pages/admin/catalogos/MaquinasPage').then((module) => ({ default: module.MaquinasPage })))
+const MaquinaHistorialPage = lazy(() => import('@/pages/admin/catalogos/MaquinaHistorialPage').then((module) => ({ default: module.MaquinaHistorialPage })))
+const TecnicoHomePage = lazy(() => import('@/pages/tecnico/TecnicoHomePage').then((module) => ({ default: module.TecnicoHomePage })))
+const TecnicoMantenimientoPage = lazy(() => import('@/pages/tecnico/TecnicoMantenimientoPage').then((module) => ({ default: module.TecnicoMantenimientoPage })))
+const TecnicoServicioDetallePage = lazy(() => import('@/pages/tecnico/TecnicoServicioDetallePage').then((module) => ({ default: module.TecnicoServicioDetallePage })))
+const TecnicoEvidenciaPage = lazy(() => import('@/pages/tecnico/TecnicoEvidenciaPage').then((module) => ({ default: module.TecnicoEvidenciaPage })))
+const TecnicoInventarioPage = lazy(() => import('@/pages/tecnico/TecnicoInventarioPage').then((module) => ({ default: module.TecnicoInventarioPage })))
+const TecnicoPerfilPage = lazy(() => import('@/pages/tecnico/TecnicoPerfilPage').then((module) => ({ default: module.TecnicoPerfilPage })))
+const TecnicoRefaccionesPage = lazy(() => import('@/pages/tecnico/TecnicoRefaccionesPage').then((module) => ({ default: module.TecnicoRefaccionesPage })))
 
 // ─── RequireRole guard ────────────────────────────────────────
 
@@ -45,11 +56,7 @@ function RequireRole({ role, children }: { role: 'admin' | 'tecnico'; children: 
   const { user, perfil, isLoading } = useAuth()
 
   if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    )
+    return <AuthLoader variant="responsive" fullScreen title="Validando tu sesión" description="Estamos dejando lista tu cuenta." />
   }
 
   if (!user) return <Navigate to="/login" replace />
@@ -61,10 +68,30 @@ function RequireRole({ role, children }: { role: 'admin' | 'tecnico'; children: 
   return <>{children}</>
 }
 
+function FullscreenRouteLoadingFallback() {
+  return <AuthLoader variant="responsive" fullScreen title="Cargando aplicación" description="Estamos preparando la interfaz." />
+}
+
+function withFullscreenLazyBoundary(children: ReactNode) {
+  return <Suspense fallback={<FullscreenRouteLoadingFallback />}>{children}</Suspense>
+}
+
+function withAdminLazyBoundary(children: ReactNode, options?: { dashboard?: boolean }) {
+  return (
+    <Suspense fallback={options?.dashboard ? <AdminDashboardSkeleton /> : <AdminPageLoadingSkeleton />}>
+      {children}
+    </Suspense>
+  )
+}
+
+function withMobileLazyBoundary(children: ReactNode, fallback: ReactNode = <TecnicoPageLoadingSkeleton />) {
+  return <Suspense fallback={fallback}>{children}</Suspense>
+}
+
 // ─── Router ──────────────────────────────────────────────────
 
 export const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
+  { path: '/login', element: withFullscreenLazyBoundary(<LoginPage />) },
 
   // Admin routes (desktop)
   {
@@ -74,27 +101,31 @@ export const router = createBrowserRouter([
       </RequireRole>
     ),
     children: [
-      { index: true, element: <DashboardPage /> },
-      { path: 'servicios', element: <ServiciosPage /> },
-      { path: 'servicios/nuevo', element: <ServicioNuevoPage /> },
-      { path: 'servicios/:id', element: <ServicioDetallePage /> },
-      { path: 'servicios/:id/editar', element: <ServicioEditarPage /> },
-      { path: 'polizas', element: <PolizasPage /> },
-      { path: 'polizas/nueva', element: <PolizaNuevaPage /> },
-      { path: 'polizas/asignar-mantenimiento', element: <AsignarMantenimientoPage /> },
-      { path: 'polizas/:id', element: <PolizaDetallePage /> },
-      { path: 'polizas/mantenimientos', element: <MantenimientosPage /> },
-      { path: 'polizas/mantenimientos/:id', element: <MantenimientoDetallePage /> },
-      { path: 'inventario', element: <InventarioPage /> },
-      { path: 'inventario/tecnico', element: <InventarioTecnicoPage /> },
-      { path: 'inventario/movimientos', element: <MovimientosPage /> },
-      { path: 'maquinas-taller', element: <MaquinasTallerPage /> },
-      { path: 'reportes/semanal', element: <ReporteSemanalPage /> },
-      { path: 'reportes/evidencia', element: <EvidenciaPage /> },
-      { path: 'catalogos', element: <CatalogosPage /> },
-      { path: 'catalogos/tecnicos', element: <TecnicosPage /> },
-      { path: 'catalogos/maquinas', element: <MaquinasPage /> },
-      { path: 'catalogos/maquinas/:id/historial', element: <MaquinaHistorialPage /> },
+      { index: true, element: withAdminLazyBoundary(<DashboardPage />, { dashboard: true }) },
+      { path: 'servicios', element: withAdminLazyBoundary(<ServiciosPage />) },
+      { path: 'servicios/nuevo', element: withAdminLazyBoundary(<ServicioNuevoPage />) },
+      { path: 'servicios/:id', element: withAdminLazyBoundary(<ServicioDetallePage />) },
+      { path: 'servicios/:id/editar', element: withAdminLazyBoundary(<ServicioEditarPage />) },
+      { path: 'polizas', element: withAdminLazyBoundary(<PolizasPage />) },
+      { path: 'polizas/nueva', element: withAdminLazyBoundary(<PolizaNuevaPage />) },
+      { path: 'polizas/asignar-mantenimiento', element: withAdminLazyBoundary(<AsignarMantenimientoPage />) },
+      { path: 'polizas/:id', element: withAdminLazyBoundary(<PolizaDetallePage />) },
+      { path: 'polizas/mantenimientos', element: withAdminLazyBoundary(<MantenimientosPage />) },
+      { path: 'polizas/mantenimientos/:id', element: withAdminLazyBoundary(<MantenimientoDetallePage />) },
+      { path: 'inventario', element: withAdminLazyBoundary(<InventarioPage />) },
+      { path: 'inventario/tecnico', element: withAdminLazyBoundary(<InventarioTecnicoPage />) },
+      { path: 'inventario/movimientos', element: withAdminLazyBoundary(<MovimientosPage />) },
+      { path: 'maquinas-taller', element: withAdminLazyBoundary(<MaquinasTallerPage />) },
+      { path: 'catalogos', element: withAdminLazyBoundary(<CatalogosPage />) },
+      { path: 'catalogos/clientes/nuevo', element: withAdminLazyBoundary(<ClienteNuevoPage />) },
+      { path: 'catalogos/clientes/:id', element: withAdminLazyBoundary(<ClienteDetallePage />) },
+      { path: 'catalogos/clientes/:id/editar', element: withAdminLazyBoundary(<ClienteEditarPage />) },
+      { path: 'catalogos/empleados', element: withAdminLazyBoundary(<TecnicosPage />) },
+      { path: 'catalogos/empleados/nuevo', element: withAdminLazyBoundary(<TecnicoNuevoPage />) },
+      { path: 'catalogos/tecnicos', element: <Navigate to="/catalogos/empleados" replace /> },
+      { path: 'catalogos/tecnicos/nuevo', element: <Navigate to="/catalogos/empleados/nuevo" replace /> },
+      { path: 'catalogos/maquinas', element: withAdminLazyBoundary(<MaquinasPage />) },
+      { path: 'catalogos/maquinas/:id/historial', element: withAdminLazyBoundary(<MaquinaHistorialPage />) },
     ],
   },
 
@@ -106,10 +137,13 @@ export const router = createBrowserRouter([
       </RequireRole>
     ),
     children: [
-      { path: 'tecnico', element: <TecnicoHomePage /> },
-      { path: 'tecnico/servicio/:id/evidencia', element: <TecnicoEvidenciaPage /> },
-      { path: 'tecnico/inventario', element: <TecnicoInventarioPage /> },
-      { path: 'tecnico/servicio/:id/refacciones', element: <TecnicoRefaccionesPage /> },
+      { path: 'tecnico', element: withMobileLazyBoundary(<TecnicoHomePage />, <TecnicoHomeSkeleton />) },
+      { path: 'tecnico/mantenimiento/:id', element: withMobileLazyBoundary(<TecnicoMantenimientoPage />, <TecnicoRefaccionesSkeleton />) },
+      { path: 'tecnico/servicio/:id', element: withMobileLazyBoundary(<TecnicoServicioDetallePage />, <TecnicoServicioDetalleSkeleton />) },
+      { path: 'tecnico/servicio/:id/evidencia', element: withMobileLazyBoundary(<TecnicoEvidenciaPage />, <TecnicoEvidenciaSkeleton />) },
+      { path: 'tecnico/inventario', element: withMobileLazyBoundary(<TecnicoInventarioPage />, <TecnicoInventarioSkeleton />) },
+      { path: 'tecnico/perfil', element: withMobileLazyBoundary(<TecnicoPerfilPage />, <TecnicoPerfilSkeleton />) },
+      { path: 'tecnico/servicio/:id/refacciones', element: withMobileLazyBoundary(<TecnicoRefaccionesPage />, <TecnicoRefaccionesSkeleton />) },
     ],
   },
 

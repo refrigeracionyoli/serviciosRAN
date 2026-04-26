@@ -1,6 +1,11 @@
 import { supabase } from './supabase'
+import { getFreshAccessToken } from './edge-auth'
 
 type R2FunctionName = 'r2-presigned-put' | 'r2-presigned-get' | 'r2-delete'
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+const EDGE_AUTH_COOLDOWN_MS = 8_000
+let edgeAuthFailureUntil = 0
 
 interface NormalizedInvokeError {
   status?: number
@@ -8,36 +13,8 @@ interface NormalizedInvokeError {
   detail: string
 }
 
-async function normalizeInvokeError(error: unknown): Promise<NormalizedInvokeError> {
-  let message = 'Error desconocido al invocar Edge Function'
-  let detail = ''
-  let status: number | undefined
-
-  if (error instanceof Error) {
-    message = error.message
-  }
-
-  if (typeof error === 'object' && error !== null && 'context' in error) {
-    const context = (error as { context?: unknown }).context
-    if (context instanceof Response) {
-      status = context.status
-      try {
-        detail = await context.text()
-      } catch {
-        detail = ''
-      }
-    }
-  }
-
-  return {
-    status,
-    message,
-    detail: detail.trim().length > 0 ? detail : message,
-  }
-}
-
 function isAuthLikeFailure(error: NormalizedInvokeError): boolean {
-  if (error.status === 401 || error.status === 403) {
+  if (error.status === 401) {
     return true
   }
 
@@ -45,38 +22,91 @@ function isAuthLikeFailure(error: NormalizedInvokeError): boolean {
   return (
     text.includes('jwt') ||
     text.includes('unauthorized') ||
-    text.includes('forbidden') ||
     text.includes('expired') ||
     text.includes('auth')
   )
 }
 
+async function getSessionAccessToken(): Promise<string> {
+  return getFreshAccessToken()
+}
+
+async function refreshSessionAccessToken(): Promise<string> {
+  const { data, error } = await supabase.auth.refreshSession()
+  if (error || !data.session?.access_token) {
+    throw error ?? new Error('No se pudo refrescar la sesión.')
+  }
+  return data.session.access_token
+}
+
+async function callEdgeFunction<T>(
+  functionName: R2FunctionName,
+  body: Record<string, unknown>,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<{ data?: T; error?: NormalizedInvokeError }> {
+  const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    let detail = ''
+    try {
+      detail = (await response.text()).trim()
+    } catch {
+      detail = ''
+    }
+
+    return {
+      error: {
+        status: response.status,
+        message: `Error HTTP ${response.status}`,
+        detail: detail.length ? detail : `Falló la invocación de ${functionName}.`,
+      },
+    }
+  }
+
+  try {
+    const data = (await response.json()) as T
+    return { data }
+  } catch {
+    return {
+      error: {
+        status: response.status,
+        message: `Respuesta inválida de ${functionName}`,
+        detail: 'La función respondió sin JSON válido.',
+      },
+    }
+  }
+}
+
 async function invokeFunctionWithAuthRetry<T>(
   functionName: R2FunctionName,
   body: Record<string, unknown>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  const invoke = () =>
-    supabase.functions.invoke<T>(functionName, {
-      body,
-    })
+  if (Date.now() < edgeAuthFailureUntil) {
+    throw new Error('Tu sesión no pudo validarse con el servidor. Cierra sesión e inicia nuevamente.')
+  }
 
-  let { data, error } = await invoke()
+  let accessToken = await getSessionAccessToken()
+  const { data, error } = await callEdgeFunction<T>(functionName, body, accessToken, signal)
 
   if (!error && data != null) {
+    edgeAuthFailureUntil = 0
     return data
   }
 
-  let normalized = await normalizeInvokeError(error)
-
-  if (isAuthLikeFailure(normalized)) {
-    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession()
-    if (!refreshError && refreshed.session) {
-      ;({ data, error } = await invoke())
-      if (!error && data != null) {
-        return data
-      }
-      normalized = await normalizeInvokeError(error)
-    }
+  const normalized = error ?? {
+    message: `Falló la invocación de ${functionName}`,
+    detail: `No se recibió respuesta válida de ${functionName}.`,
   }
 
   if (normalized.status === 404) {
@@ -84,7 +114,28 @@ async function invokeFunctionWithAuthRetry<T>(
   }
 
   if (isAuthLikeFailure(normalized)) {
-    throw new Error(`Tu sesión no es válida o expiró. Detalle: ${normalized.detail}`)
+    accessToken = await refreshSessionAccessToken()
+    const retry = await callEdgeFunction<T>(functionName, body, accessToken, signal)
+    if (!retry.error && retry.data != null) {
+      edgeAuthFailureUntil = 0
+      return retry.data
+    }
+
+    const retryNormalized = retry.error ?? {
+      message: `Falló la invocación de ${functionName}`,
+      detail: `No se recibió respuesta válida de ${functionName}.`,
+    }
+
+    if (isAuthLikeFailure(retryNormalized)) {
+      edgeAuthFailureUntil = Date.now() + EDGE_AUTH_COOLDOWN_MS
+      throw new Error('No se pudo validar tu sesión para procesar archivos de evidencia. Cierra sesión e inicia nuevamente.')
+    }
+
+    if (retryNormalized.status === 404) {
+      throw new Error(getFunctionErrorMessage(functionName, retryNormalized.detail))
+    }
+
+    throw new Error(`Error al invocar ${functionName}: ${retryNormalized.detail}`)
   }
 
   throw new Error(`Error al invocar ${functionName}: ${normalized.detail}`)
@@ -109,24 +160,14 @@ export async function uploadEvidencia(
   servicioId: number,
   file: File,
 ): Promise<{ r2Key: string }> {
-  const getValidSession = async () => {
-    let { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      const { data: refreshed } = await supabase.auth.refreshSession()
-      session = refreshed.session
-    }
-    if (!session) throw new Error('No hay sesión activa para subir evidencias')
-    return session
-  }
-
-  const session = await getValidSession()
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
+  const accessToken = await getSessionAccessToken()
   const uploadUrl = `${supabaseUrl}/functions/v1/r2-upload?servicioId=${servicioId}&filename=${encodeURIComponent(file.name)}`
 
   const response = await fetch(uploadUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${session.access_token}`,
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
       'Content-Type': file.type,
     },
     body: file,
@@ -145,11 +186,14 @@ export async function uploadEvidencia(
  * La URL expira en 1 hora.
  * Solo puede llamarse con sesión de admin válida.
  */
-export async function getPresignedGetUrl(r2Key: string): Promise<{ downloadUrl: string }> {
+export async function getPresignedGetUrl(
+  r2Key: string,
+  options?: { signal?: AbortSignal },
+): Promise<{ downloadUrl: string }> {
   try {
     return await invokeFunctionWithAuthRetry<{ downloadUrl: string }>('r2-presigned-get', {
       r2Key,
-    })
+    }, options?.signal)
   } catch (error) {
     if (error instanceof Error) {
       throw error
@@ -160,7 +204,7 @@ export async function getPresignedGetUrl(r2Key: string): Promise<{ downloadUrl: 
 
 /**
  * Elimina una evidencia en R2 y su registro en DB desde la Edge Function.
- * Solo admin puede ejecutar esta operación.
+ * Admin puede eliminar cualquiera; técnico solo evidencias de servicios asignados.
  */
 export async function deleteEvidencia(evidenciaId: number): Promise<{ success: boolean; evidenciaId: number }> {
   try {

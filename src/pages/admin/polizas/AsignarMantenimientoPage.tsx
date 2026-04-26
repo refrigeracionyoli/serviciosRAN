@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react'
 import { ArrowLeft, ClipboardList } from 'lucide-react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { AdminBreadcrumbs } from '@/components/shared/AdminBreadcrumbs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { MantenimientoForm } from '@/components/forms/MantenimientoForm'
 import { RefaccionesForm } from '@/components/forms/RefaccionesForm'
 import { useToast } from '@/hooks/use-toast'
 import { usePolizasQuery } from '@/hooks/use-polizas'
-import { useCrearMantenimientoMutation } from '@/hooks/use-mantenimientos'
-import { supabase } from '@/lib/supabase'
+import {
+  useCrearMantenimientoMutation,
+  useGuardarMantenimientoRefaccionesMutation,
+} from '@/hooks/use-mantenimientos'
 import { formatDate, formatMXN } from '@/lib/utils'
 import type { CrearMantenimientoInput } from '@/schemas/mantenimiento.schema'
 import { refaccionSchema, type RefaccionInput } from '@/schemas/inventario.schema'
@@ -24,6 +27,7 @@ export function AsignarMantenimientoPage() {
   const [refaccionesDraft, setRefaccionesDraft] = useState<RefaccionInput[]>([])
   const { data: polizas = [] } = usePolizasQuery()
   const { mutateAsync: crearMantenimiento, isPending: isCreating } = useCrearMantenimientoMutation()
+  const { mutateAsync: guardarRefacciones, isPending: isSavingRefacciones } = useGuardarMantenimientoRefaccionesMutation()
 
   const selectedPoliza = useMemo(
     () => polizas.find((poliza) => poliza.id === initialPolizaId),
@@ -61,11 +65,23 @@ export function AsignarMantenimientoPage() {
     const refaccionInvalida = refaccionesConCaptura.find(
       (item) => !refaccionSchema.safeParse(item).success,
     )
+    const hasInvalidInventorySelection = refaccionesConCaptura.some(
+      (item) => typeof item.inventario_id !== 'number' || item.inventario_id <= 0,
+    )
 
     if (refaccionInvalida) {
       toast({
         title: 'Refaccion invalida',
         description: 'Revisa nombre, cantidad y precio unitario en las refacciones capturadas.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (hasInvalidInventorySelection) {
+      toast({
+        title: 'Refacciones incompletas',
+        description: 'Cada refacción debe seleccionarse desde el inventario antes de guardar.',
         variant: 'destructive',
       })
       return
@@ -83,22 +99,10 @@ export function AsignarMantenimientoPage() {
       })
 
       if (refaccionesConCaptura.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: refaccionesError } = await (supabase.from('servicio_refacciones') as any)
-          .insert(
-            refaccionesConCaptura.map((item) => ({
-              servicio_id: null,
-              mantenimiento_id: mantenimientoCreado.id,
-              inventario_id: item.inventario_id ?? null,
-              nombre_refaccion: item.nombre_refaccion,
-              cantidad: item.cantidad,
-              precio_unitario: item.precio_unitario,
-            })),
-          )
-
-        if (refaccionesError) {
-          throw new Error(refaccionesError.message)
-        }
+        await guardarRefacciones({
+          mantenimientoId: mantenimientoCreado.id,
+          items: refaccionesConCaptura,
+        })
       }
 
       toast({
@@ -122,6 +126,8 @@ export function AsignarMantenimientoPage() {
 
   return (
     <div className="p-5 lg:p-7">
+      <AdminBreadcrumbs items={['Pólizas', 'Mantenimientos', 'Asignar mantenimiento']} />
+
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <Button
@@ -158,7 +164,7 @@ export function AsignarMantenimientoPage() {
           <CardContent>
             <MantenimientoForm
               onSubmit={handleSubmit}
-              isLoading={isCreating}
+              isLoading={isCreating || isSavingRefacciones}
               initialPolizaId={initialPolizaId}
               requireTecnico
               hideCostoRefaccionesField
@@ -180,6 +186,7 @@ export function AsignarMantenimientoPage() {
                 onSubmit={() => undefined}
                 onChange={setRefaccionesDraft}
                 showSubmitButton={false}
+                requireCatalogSelection
               />
             </CardContent>
           </Card>

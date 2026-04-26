@@ -1,8 +1,11 @@
 import { useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, ClipboardList } from 'lucide-react'
+import { AdminBreadcrumbs } from '@/components/shared/AdminBreadcrumbs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { AdminPageLoadingSkeleton, AdminTableSkeleton } from '@/components/shared/AdminSkeletons'
+import { HorizontalScrollArea } from '@/components/shared/HorizontalScrollArea'
 import { MantenimientoStatusBadge } from '@/components/shared/StatusBadge'
 import { usePolizasQuery } from '@/hooks/use-polizas'
 import { useMantenimientosQuery } from '@/hooks/use-mantenimientos'
@@ -38,13 +41,7 @@ export function PolizaDetallePage() {
   const ultimoMantenimiento = ultimosMantenimientos.find((mantenimiento) => Boolean(mantenimiento.fecha_visita)) ?? null
 
   if (isLoading) {
-    return (
-      <div className="p-5 lg:p-7">
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-16 text-center text-ran-slate">
-          Cargando detalle de póliza...
-        </div>
-      </div>
-    )
+    return <AdminPageLoadingSkeleton />
   }
 
   if (!poliza) {
@@ -64,6 +61,8 @@ export function PolizaDetallePage() {
 
   return (
     <div className="p-5 lg:p-7">
+      <AdminBreadcrumbs items={['Pólizas', poliza.cliente?.nombre ?? 'Póliza']} />
+
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <Button
@@ -142,7 +141,7 @@ export function PolizaDetallePage() {
           <h3 className="text-base font-bold text-ran-navy">Historial de mantenimientos</h3>
         </div>
 
-        <div className="overflow-x-auto">
+        <HorizontalScrollArea>
           <table className="w-full min-w-[980px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-xs font-bold uppercase tracking-wide text-ran-slate">
@@ -157,8 +156,8 @@ export function PolizaDetallePage() {
             <tbody>
               {loadingMantenimientos && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-16 text-center text-ran-slate">
-                    Cargando mantenimientos...
+                  <td colSpan={6} className="px-4 py-4">
+                    <AdminTableSkeleton rows={4} columns={6} />
                   </td>
                 </tr>
               )}
@@ -185,7 +184,7 @@ export function PolizaDetallePage() {
               ))}
             </tbody>
           </table>
-        </div>
+        </HorizontalScrollArea>
       </section>
     </div>
   )

@@ -62,12 +62,391 @@
 }
 
 @layer base {
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    height: 100%;
+  }
+
+  html {
+    @apply bg-background;
+    overflow-x: hidden;
+    overscroll-behavior-x: none;
+  }
+
   * {
     @apply border-border;
   }
   body {
     @apply bg-background text-foreground font-sans antialiased;
     text-rendering: geometricPrecision;
+    overflow-x: hidden;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  @media (pointer: coarse) {
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+    select,
+    textarea {
+      font-size: 16px !important;
+    }
+  }
+}
+
+@keyframes ran-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes ran-export-icon-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(191, 219, 254, 0.76),
+      0 10px 24px -18px rgba(14, 165, 233, 0.7),
+      0 0 0 0 rgba(125, 211, 252, 0.34);
+  }
+  70% {
+    box-shadow:
+      inset 0 0 0 1px rgba(191, 219, 254, 0.76),
+      0 10px 24px -18px rgba(14, 165, 233, 0.7),
+      0 0 0 10px rgba(125, 211, 252, 0);
+  }
+}
+
+@keyframes ran-export-track-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+@keyframes ran-ice-cabinet-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-1px) scale(1.02);
+  }
+}
+
+@keyframes ran-ice-flake-spin {
+  0% {
+    transform: rotate(0deg) scale(0.92);
+    opacity: 0.78;
+  }
+  50% {
+    transform: rotate(180deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(360deg) scale(0.94);
+    opacity: 0.78;
+  }
+}
+
+@keyframes ran-ice-halo-spin {
+  0% {
+    transform: rotate(0deg);
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.92;
+  }
+  100% {
+    transform: rotate(360deg);
+    opacity: 0.55;
+  }
+}
+
+@keyframes ran-ice-cube-drop {
+  0% {
+    transform: translateY(-0.24rem) rotate(0deg) scale(0.78);
+    opacity: 0;
+  }
+  28% {
+    opacity: 1;
+  }
+  78% {
+    transform: translateY(0.72rem) rotate(12deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0.94rem) rotate(18deg) scale(0.7);
+    opacity: 0;
+  }
+}
+
+@keyframes ran-auth-loader-slide {
+  0% {
+    transform: translateX(-115%);
+  }
+  100% {
+    transform: translateX(255%);
+  }
+}
+
+@keyframes ran-auth-desktop-bar {
+  0%,
+  100% {
+    transform: scaleY(0.42);
+    opacity: 0.34;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  .ran-skeleton {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(
+      110deg,
+      rgba(226, 232, 240, 0.92) 8%,
+      rgba(248, 250, 252, 1) 18%,
+      rgba(226, 232, 240, 0.92) 33%
+    );
+    background-size: 200% 100%;
+    animation: ran-shimmer 1.65s linear infinite;
+  }
+
+  .ran-export-icon-pulse {
+    animation: ran-export-icon-pulse 1.8s ease-out infinite;
+  }
+
+  .ran-export-track {
+    position: relative;
+    height: 0.5rem;
+    overflow: hidden;
+    border-radius: 9999px;
+    background: rgba(235, 244, 255, 0.85);
+    box-shadow: inset 0 0 0 1px rgba(191, 211, 238, 0.55);
+  }
+
+  .ran-export-track__fill {
+    position: relative;
+    height: 100%;
+    min-width: 0.6rem;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #1B3B6F 0%, #2563EB 100%);
+    transition: width 320ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: width;
+  }
+
+  .ran-export-track__fill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.45), transparent);
+    animation: ran-export-track-sheen 1.6s linear infinite;
+  }
+
+  .ran-export-loader-shell {
+    border: 1px solid rgba(191, 219, 254, 0.78);
+    background:
+      radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 1) 0 28%, rgba(255, 255, 255, 0) 29%),
+      linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(224, 242, 254, 0.9) 52%, rgba(219, 234, 254, 0.72));
+    color: #1B3B6F;
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.86),
+      0 10px 24px -18px rgba(14, 165, 233, 0.78);
+  }
+
+  .ran-ice-loader {
+    position: relative;
+    height: 1.78rem;
+    width: 1.78rem;
+  }
+
+  .ran-ice-loader__halo {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    background: conic-gradient(
+      from 30deg,
+      rgba(14, 165, 233, 0),
+      rgba(125, 211, 252, 0.6),
+      rgba(14, 165, 233, 0)
+    );
+    mask: radial-gradient(circle, transparent 47%, #000 49%);
+    animation: ran-ice-halo-spin 1.9s linear infinite;
+  }
+
+  .ran-ice-loader__cabinet {
+    position: absolute;
+    left: 0.34rem;
+    top: 0.08rem;
+    display: flex;
+    height: 1.06rem;
+    width: 1.08rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.31rem;
+    border: 1px solid rgba(59, 130, 246, 0.26);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(224, 242, 254, 0.84)),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(125, 211, 252, 0.36));
+    box-shadow:
+      inset 0 -0.22rem 0 rgba(186, 230, 253, 0.3),
+      0 0 11px rgba(125, 211, 252, 0.28);
+    animation: ran-ice-cabinet-breathe 1.55s ease-in-out infinite;
+  }
+
+  .ran-ice-loader__cabinet::before {
+    content: "";
+    position: absolute;
+    top: 0.17rem;
+    right: 0.14rem;
+    height: 0.12rem;
+    width: 0.22rem;
+    border-radius: 9999px;
+    background: #0ea5e9;
+    box-shadow: 0 0 8px rgba(14, 165, 233, 0.76);
+  }
+
+  .ran-ice-loader__window {
+    position: absolute;
+    left: 0.14rem;
+    top: 0.16rem;
+    display: flex;
+    height: 0.6rem;
+    width: 0.6rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0.2rem;
+    background: linear-gradient(135deg, rgba(219, 234, 254, 0.96), rgba(125, 211, 252, 0.64));
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+  }
+
+  .ran-ice-loader__vent {
+    position: absolute;
+    right: 0.14rem;
+    bottom: 0.22rem;
+    height: 0.08rem;
+    width: 0.44rem;
+    border-radius: 9999px;
+    background: rgba(27, 59, 111, 0.42);
+    box-shadow:
+      0 -0.14rem 0 rgba(27, 59, 111, 0.3),
+      0 0.14rem 0 rgba(27, 59, 111, 0.3);
+  }
+
+  .ran-ice-loader__tray {
+    position: absolute;
+    bottom: 0.29rem;
+    left: 0.49rem;
+    height: 0.16rem;
+    width: 0.78rem;
+    border-radius: 0 0 0.18rem 0.18rem;
+    background: linear-gradient(90deg, rgba(147, 197, 253, 0.82), rgba(224, 242, 254, 0.95));
+  }
+
+  .ran-ice-loader__flake {
+    height: 0.43rem;
+    width: 0.43rem;
+    color: #1B3B6F;
+    filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.38));
+    animation: ran-ice-flake-spin 1.7s linear infinite;
+  }
+
+  .ran-ice-loader__cube {
+    position: absolute;
+    bottom: 0.06rem;
+    height: 0.3rem;
+    width: 0.3rem;
+    border-radius: 0.1rem;
+    border: 1px solid rgba(255, 255, 255, 0.86);
+    background: linear-gradient(135deg, #eff6ff, #7dd3fc);
+    box-shadow: 0 0 8px rgba(125, 211, 252, 0.34);
+    animation: ran-ice-cube-drop 1.25s ease-in-out infinite;
+  }
+
+  .ran-ice-loader__cube--one {
+    left: 0.48rem;
+  }
+
+  .ran-ice-loader__cube--two {
+    left: 0.83rem;
+    animation-delay: 0.48s;
+  }
+
+  .ran-ice-loader__cube--three {
+    left: 0.64rem;
+    animation-delay: 0.88s;
+  }
+
+  .ran-auth-loader {
+    position: relative;
+    height: 0.55rem;
+    overflow: hidden;
+    border-radius: 9999px;
+    background: rgba(226, 232, 240, 0.94);
+    box-shadow: inset 0 0 0 1px rgba(191, 211, 238, 0.55);
+  }
+
+  .ran-auth-loader__fill {
+    position: absolute;
+    inset: 0;
+    width: 38%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #1B3B6F 0%, #2563EB 58%, #7dd3fc 100%);
+    box-shadow: 0 0 18px rgba(37, 99, 235, 0.26);
+    animation: ran-auth-loader-slide 1.08s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .ran-auth-loader-desktop {
+    display: flex;
+    height: 1.15rem;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 0.34rem;
+  }
+
+  .ran-auth-loader-desktop__bar {
+    height: 100%;
+    width: 0.34rem;
+    transform-origin: center bottom;
+    border-radius: 9999px;
+    background: linear-gradient(180deg, #1B3B6F 0%, #2563EB 100%);
+    box-shadow: 0 8px 18px -14px rgba(37, 99, 235, 0.75);
+    animation: ran-auth-desktop-bar 0.92s ease-in-out infinite;
+  }
+
+  .ran-auth-loader-desktop__bar:nth-child(2) {
+    animation-delay: 0.14s;
+  }
+
+  .ran-auth-loader-desktop__bar:nth-child(3) {
+    animation-delay: 0.28s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ran-skeleton,
+  .ran-export-icon-pulse,
+  .ran-export-track__fill::after,
+  .ran-ice-loader__halo,
+  .ran-ice-loader__cabinet,
+  .ran-ice-loader__flake,
+  .ran-ice-loader__cube,
+  .ran-auth-loader__fill,
+  .ran-auth-loader-desktop__bar {
+    animation: none !important;
+  }
+
+  .ran-export-track__fill {
+    transition: none;
   }
 }
 

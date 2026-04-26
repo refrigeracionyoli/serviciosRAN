@@ -1,19 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Wrench } from 'lucide-react'
+import { AdminBreadcrumbs } from '@/components/shared/AdminBreadcrumbs'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { PageLoading } from '@/components/shared/LoadingSpinner'
+import { AdminPageLoadingSkeleton, AdminTableSkeleton } from '@/components/shared/AdminSkeletons'
 import { MantenimientoForm } from '@/components/forms/MantenimientoForm'
 import { RefaccionesForm } from '@/components/forms/RefaccionesForm'
 import { useToast } from '@/hooks/use-toast'
-import { useMantenimientoDetalleQuery, useEditarMantenimientoMutation } from '@/hooks/use-mantenimientos'
-import { supabase } from '@/lib/supabase'
+import {
+  useEditarMantenimientoMutation,
+  useGuardarMantenimientoRefaccionesMutation,
+  useMantenimientoDetalleQuery,
+  useMantenimientoRefaccionesQuery,
+} from '@/hooks/use-mantenimientos'
 import { formatDate, formatMXN } from '@/lib/utils'
 import type { CrearMantenimientoInput } from '@/schemas/mantenimiento.schema'
 import { refaccionSchema, type RefaccionInput } from '@/schemas/inventario.schema'
-import type { ServicioRefaccion } from '@/types/domain.types'
 
 function normalizeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : 'No se pudo actualizar el mantenimiento.'
@@ -43,14 +46,16 @@ function areRefaccionesEqual(current: RefaccionInput[], previous: RefaccionInput
   return left.every((value, index) => value === right[index])
 }
 
+const EMPTY_REFACCIONES: RefaccionInput[] = []
+
 export function MantenimientoDetallePage() {
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   const { toast } = useToast()
   const { id } = useParams<{ id: string }>()
 
   const mantenimientoId = Number(id)
   const [refaccionesDraft, setRefaccionesDraft] = useState<RefaccionInput[]>([])
+  const lastLoadedRefaccionesRef = useRef<RefaccionInput[] | null>(null)
 
   const {
     data: mantenimiento,
@@ -58,55 +63,13 @@ export function MantenimientoDetallePage() {
   } = useMantenimientoDetalleQuery(mantenimientoId)
 
   const {
-    data: refacciones = [],
+    data: refaccionesData,
     isLoading: loadingRefacciones,
-  } = useQuery({
-    queryKey: ['mantenimiento-refacciones', mantenimientoId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('servicio_refacciones')
-        .select('*')
-        .eq('mantenimiento_id', mantenimientoId)
-        .order('id')
-
-      if (error) throw error
-      return data as ServicioRefaccion[]
-    },
-    enabled: mantenimientoId > 0,
-  })
+  } = useMantenimientoRefaccionesQuery(mantenimientoId)
+  const refacciones = refaccionesData ?? EMPTY_REFACCIONES
 
   const { mutateAsync: editarMantenimiento, isPending: isUpdating } = useEditarMantenimientoMutation()
-
-  const { mutateAsync: guardarRefacciones, isPending: isSavingRefacciones } = useMutation({
-    mutationFn: async (items: RefaccionInput[]) => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: deleteError } = await (supabase.from('servicio_refacciones') as any)
-        .delete()
-        .eq('mantenimiento_id', mantenimientoId)
-
-      if (deleteError) throw deleteError
-
-      if (items.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error: insertError } = await (supabase.from('servicio_refacciones') as any)
-          .insert(
-            items.map((item) => ({
-              servicio_id: null,
-              mantenimiento_id: mantenimientoId,
-              inventario_id: item.inventario_id ?? null,
-              nombre_refaccion: item.nombre_refaccion,
-              cantidad: item.cantidad,
-              precio_unitario: item.precio_unitario,
-            })),
-          )
-
-        if (insertError) throw insertError
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['mantenimiento-refacciones', mantenimientoId] })
-    },
-  })
+  const { mutateAsync: guardarRefacciones, isPending: isSavingRefacciones } = useGuardarMantenimientoRefaccionesMutation()
 
   const defaultRefacciones = useMemo<RefaccionInput[]>(
     () =>
@@ -120,7 +83,19 @@ export function MantenimientoDetallePage() {
   )
 
   useEffect(() => {
-    setRefaccionesDraft(defaultRefacciones)
+    const previousLoaded = lastLoadedRefaccionesRef.current
+    const hasRemoteChanges = !previousLoaded || !areRefaccionesEqual(previousLoaded, defaultRefacciones)
+
+    if (!hasRemoteChanges) return
+
+    setRefaccionesDraft((current) => {
+      if (previousLoaded && !areRefaccionesEqual(current, previousLoaded)) {
+        return current
+      }
+
+      return defaultRefacciones
+    })
+    lastLoadedRefaccionesRef.current = defaultRefacciones
   }, [defaultRefacciones])
 
   const totalRefacciones = useMemo(
@@ -139,6 +114,9 @@ export function MantenimientoDetallePage() {
       .filter((item) => item.nombre_refaccion.length > 0)
 
     const refaccionInvalida = refaccionesCapturadas.find((item) => !refaccionSchema.safeParse(item).success)
+    const hasInvalidInventorySelection = refaccionesCapturadas.some(
+      (item) => typeof item.inventario_id !== 'number' || item.inventario_id <= 0,
+    )
     if (refaccionInvalida) {
       toast({
         title: 'Refaccion invalida',
@@ -148,10 +126,22 @@ export function MantenimientoDetallePage() {
       return
     }
 
+    if (hasInvalidInventorySelection) {
+      toast({
+        title: 'Refacciones incompletas',
+        description: 'Cada refacción debe seleccionarse desde el inventario antes de guardar.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     try {
       const refaccionesChanged = !areRefaccionesEqual(refaccionesCapturadas, defaultRefacciones)
       if (refaccionesChanged) {
-        await guardarRefacciones(refaccionesCapturadas)
+        await guardarRefacciones({
+          mantenimientoId,
+          items: refaccionesCapturadas,
+        })
       }
 
       const fechaVisitaAjustada =
@@ -180,7 +170,7 @@ export function MantenimientoDetallePage() {
     }
   }
 
-  if (isLoading) return <PageLoading />
+  if (isLoading) return <AdminPageLoadingSkeleton />
 
   if (!mantenimiento) {
     return (
@@ -194,6 +184,10 @@ export function MantenimientoDetallePage() {
 
   return (
     <div className="p-5 lg:p-7">
+      <AdminBreadcrumbs
+        items={['Pólizas', 'Mantenimientos', mantenimiento.cliente?.nombre ?? 'Mantenimiento']}
+      />
+
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-3">
           <Button
@@ -248,13 +242,14 @@ export function MantenimientoDetallePage() {
             </CardHeader>
             <CardContent>
               {loadingRefacciones ? (
-                <PageLoading />
+                <AdminTableSkeleton rows={4} columns={4} />
               ) : (
                 <RefaccionesForm
                   defaultValues={defaultRefacciones}
                   onSubmit={() => undefined}
                   onChange={setRefaccionesDraft}
                   showSubmitButton={false}
+                  requireCatalogSelection
                 />
               )}
             </CardContent>

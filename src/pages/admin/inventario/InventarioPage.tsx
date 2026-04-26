@@ -7,6 +7,10 @@ import { AlertTriangle, ArrowRightLeft, History, MoreVertical, Pencil, Plus, Pow
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import {
+  AdminFilterBarSkeleton,
+  AdminStatsGridSkeleton,
+} from '@/components/shared/AdminSkeletons'
 import { DataTable } from '@/components/shared/DataTable'
 import {
   DropdownMenu,
@@ -71,6 +75,23 @@ function toNullableText(value: string | null | undefined): string | null {
   return normalized.length ? normalized : null
 }
 
+function toRequiredNumericValue(value: unknown): number | undefined {
+  if (value == null) return undefined
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim()
+    if (!normalized) return undefined
+    const parsed = Number(normalized)
+    return Number.isNaN(parsed) ? Number.NaN : parsed
+  }
+  return Number.NaN
+}
+
+function toOptionalNumericValue(value: unknown): number | null {
+  const normalized = toRequiredNumericValue(value)
+  return typeof normalized === 'undefined' ? null : normalized
+}
+
 export function InventarioPage() {
   const navigate = useNavigate()
   const { toast } = useToast()
@@ -86,6 +107,7 @@ export function InventarioPage() {
   const { mutate: editarItem, isPending: isEditing } = useEditarItemInventarioMutation()
   const { mutate: ajustarStock, isPending: isAdjusting } = useAjusteInventarioMutation()
   const { mutate: toggleActivo, isPending: isToggling } = useToggleItemInventarioActivoMutation()
+  const isPageLoading = isLoading
 
   const createForm = useForm<CrearItemInventarioInput>({
     resolver: zodResolver(crearItemInventarioSchema),
@@ -176,7 +198,7 @@ export function InventarioPage() {
     }
   }, [inventario])
 
-  const columns = useMemo<ColumnDef<ItemInventario>[]>(() => {
+  const columns = useMemo<Array<ColumnDef<ItemInventario>>>(() => {
     return [
       {
         accessorKey: 'nombre',
@@ -296,10 +318,18 @@ export function InventarioPage() {
   }, [isBusy, navigate])
 
   const handleCreateSubmit = createForm.handleSubmit((values) => {
+    if (values.precio_unitario == null) {
+      createForm.setError('precio_unitario', {
+        type: 'manual',
+        message: 'El precio unitario es obligatorio',
+      })
+      return
+    }
+
     crearItem({
       ...values,
       descripcion: toNullableText(values.descripcion),
-      precio_unitario: values.precio_unitario == null ? null : Number(values.precio_unitario),
+      precio_unitario: Number(values.precio_unitario),
       activo: true,
     }, {
       onSuccess: () => {
@@ -330,13 +360,20 @@ export function InventarioPage() {
 
   const handleEditSubmit = editForm.handleSubmit((values) => {
     if (!itemToEdit) return
+    if (values.precio_unitario == null) {
+      editForm.setError('precio_unitario', {
+        type: 'manual',
+        message: 'El precio unitario es obligatorio',
+      })
+      return
+    }
 
     editarItem({
       id: itemToEdit.id,
       data: {
         ...values,
         descripcion: toNullableText(values.descripcion),
-        precio_unitario: values.precio_unitario == null ? null : Number(values.precio_unitario),
+        precio_unitario: Number(values.precio_unitario),
         activo: itemToEdit.activo,
       },
     }, {
@@ -442,48 +479,57 @@ export function InventarioPage() {
 
       <InventarioSubNav />
 
-      <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 shadow-sm lg:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ran-slate">Items en catálogo</p>
-          <p className="mt-1 text-2xl font-bold text-ran-navy">{stats.total}</p>
-        </div>
-        <div className="rounded-xl border border-green-200 bg-green-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-green-700">Activos</p>
-          <p className="mt-1 text-2xl font-bold text-green-900">{stats.activos}</p>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Stock bajo</p>
-          <p className="mt-1 text-2xl font-bold text-amber-900">{stats.stockBajo}</p>
-        </div>
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Valor estimado</p>
-          <p className="mt-1 text-2xl font-bold text-blue-900">{formatMXN(stats.valorTotal)}</p>
-          {stats.inactivos > 0 ? <p className="mt-1 text-xs text-blue-700">Inactivos: {stats.inactivos}</p> : null}
-        </div>
-      </div>
+      {isPageLoading ? (
+        <>
+          <AdminStatsGridSkeleton count={4} className="mb-4" />
+          <AdminFilterBarSkeleton className="mb-4 lg:grid-cols-[1.8fr_0.8fr]" items={['', '']} />
+        </>
+      ) : (
+        <>
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 shadow-sm lg:grid-cols-4">
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-ran-slate">Items en catálogo</p>
+              <p className="mt-1 text-2xl font-bold text-ran-navy">{stats.total}</p>
+            </div>
+            <div className="rounded-xl border border-green-200 bg-green-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-green-700">Activos</p>
+              <p className="mt-1 text-2xl font-bold text-green-900">{stats.activos}</p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Stock bajo</p>
+              <p className="mt-1 text-2xl font-bold text-amber-900">{stats.stockBajo}</p>
+            </div>
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">Valor estimado</p>
+              <p className="mt-1 text-2xl font-bold text-blue-900">{formatMXN(stats.valorTotal)}</p>
+              {stats.inactivos > 0 ? <p className="mt-1 text-xs text-blue-700">Inactivos: {stats.inactivos}</p> : null}
+            </div>
+          </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 shadow-sm lg:grid-cols-[1.8fr_0.8fr]">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ran-slate" />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar por nombre o descripción..."
-            className="h-11 rounded-xl border-slate-200 pl-10"
-          />
-        </div>
-        <Select value={stockFilter} onValueChange={(value) => setStockFilter(value as StockFilter)}>
-          <SelectTrigger className="h-11 rounded-xl border-slate-200">
-            <SelectValue placeholder="Filtrar catálogo" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
-            <SelectItem value="stock_bajo">Solo stock bajo</SelectItem>
-            <SelectItem value="activos">Solo activos</SelectItem>
-            <SelectItem value="inactivos">Solo inactivos</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+          <div className="mb-4 grid grid-cols-1 gap-3 rounded-2xl bg-white p-3 shadow-sm lg:grid-cols-[1.8fr_0.8fr]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ran-slate" />
+              <Input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Buscar por nombre o descripción..."
+                className="h-11 rounded-xl border-slate-200 pl-10"
+              />
+            </div>
+            <Select value={stockFilter} onValueChange={(value) => setStockFilter(value as StockFilter)}>
+              <SelectTrigger className="h-11 rounded-xl border-slate-200">
+                <SelectValue placeholder="Filtrar catálogo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos</SelectItem>
+                <SelectItem value="stock_bajo">Solo stock bajo</SelectItem>
+                <SelectItem value="activos">Solo activos</SelectItem>
+                <SelectItem value="inactivos">Solo inactivos</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </>
+      )}
 
       <DataTable
         columns={columns}
@@ -530,7 +576,7 @@ export function InventarioPage() {
                   min={0}
                   step={1}
                   {...createForm.register('stock_actual', {
-                    valueAsNumber: true,
+                    setValueAs: toRequiredNumericValue,
                   })}
                 />
                 {createForm.formState.errors.stock_actual ? <p className="text-xs text-destructive">{createForm.formState.errors.stock_actual.message}</p> : null}
@@ -544,14 +590,14 @@ export function InventarioPage() {
                   min={0}
                   step={1}
                   {...createForm.register('stock_minimo', {
-                    valueAsNumber: true,
+                    setValueAs: toRequiredNumericValue,
                   })}
                 />
                 {createForm.formState.errors.stock_minimo ? <p className="text-xs text-destructive">{createForm.formState.errors.stock_minimo.message}</p> : null}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="crear_precio_unitario">Precio unitario</Label>
+                <Label htmlFor="crear_precio_unitario">Precio unitario *</Label>
                 <Input
                   id="crear_precio_unitario"
                   type="number"
@@ -559,7 +605,7 @@ export function InventarioPage() {
                   step="0.01"
                   placeholder="0.00"
                   {...createForm.register('precio_unitario', {
-                    setValueAs: (value: string) => (value === '' ? null : Number(value)),
+                    setValueAs: toOptionalNumericValue,
                   })}
                 />
                 {createForm.formState.errors.precio_unitario ? <p className="text-xs text-destructive">{createForm.formState.errors.precio_unitario.message}</p> : null}
@@ -608,7 +654,7 @@ export function InventarioPage() {
                   min={0}
                   step={1}
                   {...editForm.register('stock_actual', {
-                    valueAsNumber: true,
+                    setValueAs: toRequiredNumericValue,
                   })}
                 />
                 {editForm.formState.errors.stock_actual ? <p className="text-xs text-destructive">{editForm.formState.errors.stock_actual.message}</p> : null}
@@ -622,14 +668,14 @@ export function InventarioPage() {
                   min={0}
                   step={1}
                   {...editForm.register('stock_minimo', {
-                    valueAsNumber: true,
+                    setValueAs: toRequiredNumericValue,
                   })}
                 />
                 {editForm.formState.errors.stock_minimo ? <p className="text-xs text-destructive">{editForm.formState.errors.stock_minimo.message}</p> : null}
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="editar_precio_unitario">Precio unitario</Label>
+                <Label htmlFor="editar_precio_unitario">Precio unitario *</Label>
                 <Input
                   id="editar_precio_unitario"
                   type="number"
@@ -637,7 +683,7 @@ export function InventarioPage() {
                   step="0.01"
                   placeholder="0.00"
                   {...editForm.register('precio_unitario', {
-                    setValueAs: (value: string) => (value === '' ? null : Number(value)),
+                    setValueAs: toOptionalNumericValue,
                   })}
                 />
                 {editForm.formState.errors.precio_unitario ? <p className="text-xs text-destructive">{editForm.formState.errors.precio_unitario.message}</p> : null}

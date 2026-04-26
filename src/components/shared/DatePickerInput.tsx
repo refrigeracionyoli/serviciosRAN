@@ -15,6 +15,7 @@ interface Props {
   onChange: (value: string | null) => void
   placeholder?: string
   disabled?: boolean
+  minDate?: string | Date
   maxDate?: string | Date
   allowClear?: boolean
   className?: string
@@ -61,15 +62,21 @@ export function DatePickerInput({
   onChange,
   placeholder = 'Seleccionar fecha',
   disabled,
+  minDate,
   maxDate,
   allowClear = false,
   className,
 }: Props) {
   const selectedDate = parseDateValue(value)
+  const minAllowedDate = parseLimitDate(minDate)
   const maxAllowedDate = parseLimitDate(maxDate)
 
   const handleSelectDate = (date: Date | undefined) => {
     if (!date) return
+
+    if (minAllowedDate && date < minAllowedDate) {
+      return
+    }
 
     if (maxAllowedDate && date > maxAllowedDate) {
       return
@@ -102,8 +109,13 @@ export function DatePickerInput({
             mode="single"
             selected={selectedDate ?? undefined}
             onSelect={handleSelectDate}
+            fromDate={minAllowedDate ?? undefined}
             toDate={maxAllowedDate ?? undefined}
-            disabled={maxAllowedDate ? { after: maxAllowedDate } : undefined}
+            disabled={(date) => {
+              if (minAllowedDate && date < minAllowedDate) return true
+              if (maxAllowedDate && date > maxAllowedDate) return true
+              return false
+            }}
             initialFocus
             locale={es}
           />
