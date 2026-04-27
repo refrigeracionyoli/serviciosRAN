@@ -1,4 +1,4 @@
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 import { requireAnyRole, type AppRole } from '../_shared/auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { AwsClient } from 'npm:aws4fetch'
@@ -55,6 +55,7 @@ async function ensureServicioAccess(
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
+  const corsHeaders = getCorsHeaders(req)
 
   try {
     const token = req.headers.get('Authorization')?.replace('Bearer ', '')

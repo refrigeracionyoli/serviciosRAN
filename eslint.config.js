@@ -4,7 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 
-const typedTypeScriptFiles = ['src/**/*.{ts,tsx}', 'vite.config.ts', 'tailwind.config.ts']
+const typedTypeScriptFiles = ['src/**/*.{ts,tsx}', 'vite.config.ts', 'vitest.config.ts', 'playwright.config.ts', 'tailwind.config.ts']
 const supabaseFunctionFiles = ['supabase/functions/**/*.ts']
 
 const typeCheckedConfigs = [
@@ -35,6 +35,10 @@ export default tseslint.config(
       'dev-dist/**',
       'node_modules/**',
       'coverage/**',
+      'e2e/**',
+      'playwright-report/**',
+      'test-results/**',
+      'test/**',
       'supabase/.temp/**',
     ],
   },

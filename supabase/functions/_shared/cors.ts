@@ -3,6 +3,12 @@ const allowedOrigins = (Deno.env.get('ALLOWED_ORIGINS') ?? '')
   .map((origin) => origin.trim())
   .filter((origin) => origin.length > 0)
 
+const baseCorsHeaders = {
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+  ...(allowedOrigins.length > 0 ? { Vary: 'Origin' } : {}),
+}
+
 function resolveOrigin(req: Request): string | null {
   if (allowedOrigins.length === 0) return '*'
 
@@ -12,11 +18,15 @@ function resolveOrigin(req: Request): string | null {
   return allowedOrigins.includes(requestOrigin) ? requestOrigin : null
 }
 
-export const corsHeaders = {
-  'Access-Control-Allow-Origin': allowedOrigins.length === 1 ? allowedOrigins[0] : '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-  ...(allowedOrigins.length > 0 ? { Vary: 'Origin' } : {}),
+function buildCorsHeaders(origin: string | null): HeadersInit {
+  return {
+    ...baseCorsHeaders,
+    ...(origin ? { 'Access-Control-Allow-Origin': origin } : {}),
+  }
+}
+
+export function getCorsHeaders(req: Request): HeadersInit {
+  return buildCorsHeaders(resolveOrigin(req))
 }
 
 export function handleCors(req: Request): Response | null {
@@ -26,7 +36,7 @@ export function handleCors(req: Request): Response | null {
     if (hasOriginHeader && origin === null) {
       return new Response('Forbidden origin', {
         status: 403,
-        headers: corsHeaders,
+        headers: buildCorsHeaders(null),
       })
     }
   }
@@ -35,15 +45,12 @@ export function handleCors(req: Request): Response | null {
     if (origin === null) {
       return new Response('Forbidden origin', {
         status: 403,
-        headers: corsHeaders,
+        headers: buildCorsHeaders(null),
       })
     }
 
     return new Response('ok', {
-      headers: {
-        ...corsHeaders,
-        'Access-Control-Allow-Origin': origin,
-      },
+      headers: buildCorsHeaders(origin),
     })
   }
   return null

@@ -1,4 +1,4 @@
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 import { requireAnyRole } from '../_shared/auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { GetObjectCommand, S3Client } from 'npm:@aws-sdk/client-s3'
@@ -93,6 +93,7 @@ async function ensureEvidenciaAccess(r2Key: string, token: string): Promise<void
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
+  const corsHeaders = getCorsHeaders(req)
 
   try {
     const token = extractBearerToken(req)

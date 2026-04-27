@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { corsHeaders, handleCors } from '../_shared/cors.ts'
+import { getCorsHeaders, handleCors } from '../_shared/cors.ts'
 import { requireRole } from '../_shared/auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -115,6 +115,7 @@ function mapAdminCreateUserError(errorMessage: string): string {
 Deno.serve(async (req) => {
   const corsResponse = handleCors(req)
   if (corsResponse) return corsResponse
+  const corsHeaders = getCorsHeaders(req)
 
   if (req.method !== 'POST') {
     return new Response('Método no permitido', {

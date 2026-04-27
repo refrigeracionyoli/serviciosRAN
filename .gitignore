@@ -7,6 +7,10 @@ node_modules/
 dist/
 dist-ssr/
 dev-dist/
+coverage/
+playwright-report/
+test-results/
+.vercel/
 *.local
 
 # Local AI/design workspaces
