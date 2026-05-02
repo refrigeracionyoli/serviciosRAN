@@ -1,4 +1,4 @@
-import * as XLSX from 'xlsx'
+import type { Workbook as ExcelWorkbook } from 'exceljs'
 import { formatDate, formatDateTime } from '@/lib/utils'
 import type { Servicio } from '@/types/domain.types'
 
@@ -19,11 +19,48 @@ function getStatusLabel(status: Servicio['status']): string {
   return 'Cerrado'
 }
 
-export function exportServiciosExcel({
+type ExcelWorkbookConstructor = new () => ExcelWorkbook
+
+let excelWorkbookConstructorPromise: Promise<ExcelWorkbookConstructor> | null = null
+
+async function getExcelWorkbookConstructor(): Promise<ExcelWorkbookConstructor> {
+  if (!excelWorkbookConstructorPromise) {
+    excelWorkbookConstructorPromise = import('exceljs').then((module) => {
+      const namespace = module as unknown as {
+        default?: { Workbook?: ExcelWorkbookConstructor }
+        Workbook?: ExcelWorkbookConstructor
+      }
+      const WorkbookCtor = namespace.default?.Workbook ?? namespace.Workbook
+
+      if (!WorkbookCtor) {
+        throw new Error('No se pudo inicializar la libreria de Excel.')
+      }
+
+      return WorkbookCtor
+    })
+  }
+
+  return excelWorkbookConstructorPromise
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const fileUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = fileUrl
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(fileUrl)
+}
+
+export async function exportServiciosExcel({
   servicios,
   filename,
   periodLabel,
-}: ExportServiciosOptions) {
+}: ExportServiciosOptions): Promise<void> {
+  const WorkbookCtor = await getExcelWorkbookConstructor()
+  const workbook = new WorkbookCtor()
+  const worksheet = workbook.addWorksheet('Servicios')
+
   const summaryRows = [
     ['Listado de servicios'],
     [`Periodo: ${periodLabel}`],
@@ -47,26 +84,52 @@ export function exportServiciosExcel({
     Descripcion: servicio.descripcion ?? '',
   }))
 
-  const worksheet = XLSX.utils.aoa_to_sheet(summaryRows)
-  XLSX.utils.sheet_add_json(worksheet, serviceRows, { origin: 'A5' })
+  worksheet.addRows(summaryRows)
+  worksheet.addRow(Object.keys(serviceRows[0] ?? {
+    Orden: '',
+    Aviso: '',
+    Status: '',
+    Fecha: '',
+    'Tipo servicio': '',
+    'Clase orden': '',
+    'Codigo cliente': '',
+    Cliente: '',
+    Tecnico: '',
+    'Costo mano de obra': '',
+    Refacciones: '',
+    Total: '',
+    Descripcion: '',
+  }))
 
-  worksheet['!cols'] = [
-    { wch: 12 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 26 },
-    { wch: 14 },
-    { wch: 14 },
-    { wch: 34 },
-    { wch: 24 },
-    { wch: 20 },
-    { wch: 18 },
-    { wch: 14 },
-    { wch: 45 },
+  for (const row of serviceRows) {
+    worksheet.addRow(Object.values(row))
+  }
+
+  worksheet.columns = [
+    { width: 12 },
+    { width: 12 },
+    { width: 14 },
+    { width: 16 },
+    { width: 26 },
+    { width: 14 },
+    { width: 14 },
+    { width: 34 },
+    { width: 24 },
+    { width: 20 },
+    { width: 18 },
+    { width: 14 },
+    { width: 45 },
   ]
 
-  const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Servicios')
-  XLSX.writeFile(workbook, filename, { compression: true })
+  worksheet.getRow(5).font = { bold: true }
+  worksheet.getRow(5).alignment = { vertical: 'middle' }
+  worksheet.autoFilter = {
+    from: 'A5',
+    to: `M${Math.max(5, serviceRows.length + 5)}`,
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer()
+  downloadBlob(filename, new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }))
 }

@@ -30,6 +30,6 @@ if (!URL.revokeObjectURL) {
 }
 
 afterEach(() => {
-  localStorage.clear()
-  sessionStorage.clear()
+  window.localStorage?.clear?.()
+  window.sessionStorage?.clear?.()
 })

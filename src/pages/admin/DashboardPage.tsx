@@ -720,7 +720,7 @@ export function DashboardPage() {
 
     try {
       const { exportServiciosExcel } = await import('@/lib/servicios-export')
-      exportServiciosExcel({
+      await exportServiciosExcel({
         servicios: serviciosFiltrados,
         filename: `servicios-dashboard-${range}-${todayIso}.xlsx`,
         periodLabel: `Dashboard (${rangeLabel})`,

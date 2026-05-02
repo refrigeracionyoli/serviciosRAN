@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint . --max-warnings=0",
     "lint:fix": "eslint . --fix",
+    "audit:ci": "node tools/audit-dependencies.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -61,7 +62,6 @@
     "recharts": "^3.8.1",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
-    "xlsx": "^0.18.5",
     "zod": "^3.24.1",
     "zustand": "^5.0.2"
   },
@@ -83,14 +83,17 @@
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.5.0",
     "jsdom": "^26.1.0",
-    "postcss": "^8.4.49",
+    "postcss": "^8.5.10",
     "supabase": "^2.84.5",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.59.0",
-    "vite": "^6.0.5",
+    "vite": "^6.4.2",
     "vite-plugin-pwa": "^0.21.1",
     "vitest": "^3.2.4",
     "workbox-window": "^7.3.0"
+  },
+  "overrides": {
+    "lodash": "^4.17.24"
   }
 }

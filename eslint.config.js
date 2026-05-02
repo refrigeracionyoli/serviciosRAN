@@ -220,4 +220,24 @@ export default tseslint.config(
       'prefer-template': 'error',
     },
   },
+  {
+    files: ['tools/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.es2024,
+      },
+    },
+    rules: {
+      'no-console': ['error', { allow: ['log', 'warn', 'error'] }],
+      'no-duplicate-imports': 'error',
+      'no-implicit-coercion': 'error',
+      'object-shorthand': 'error',
+      'prefer-const': ['error', {
+        destructuring: 'all',
+        ignoreReadBeforeAssign: true,
+      }],
+      'prefer-template': 'error',
+    },
+  },
 )

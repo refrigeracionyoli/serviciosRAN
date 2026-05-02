@@ -581,7 +581,7 @@ export function ServiciosPage() {
 
     try {
       const { exportServiciosExcel } = await import('@/lib/servicios-export')
-      exportServiciosExcel({
+      await exportServiciosExcel({
         servicios: sortedServicios,
         filename,
         periodLabel,

@@ -1,4 +1,3 @@
-import * as XLSX from 'xlsx'
 import UZIP from 'uzip'
 import type { Workbook, Worksheet } from 'exceljs'
 import { getPresignedGetUrl } from '@/lib/r2'
@@ -1065,18 +1064,66 @@ function loadTemplateArrayBuffer(url: string): Promise<ArrayBuffer> {
   return promise
 }
 
+function toLookupCellValue(value: unknown): string | number {
+  if (typeof value === 'number' || typeof value === 'string') return value
+  if (value == null) return ''
+
+  if (typeof value === 'object') {
+    const candidate = value as {
+      result?: unknown
+      text?: unknown
+      richText?: Array<{ text?: unknown }>
+    }
+
+    if (typeof candidate.result === 'number' || typeof candidate.result === 'string') {
+      return candidate.result
+    }
+
+    if (typeof candidate.text === 'string') {
+      return candidate.text
+    }
+
+    if (Array.isArray(candidate.richText)) {
+      return candidate.richText
+        .map((part) => typeof part.text === 'string' ? part.text : '')
+        .join('')
+    }
+  }
+
+  return String(value)
+}
+
+function readLookupRows(worksheet: ExcelWorksheet, maxColumn: number): Array<Array<string | number>> {
+  const rows: Array<Array<string | number>> = []
+
+  worksheet.eachRow({ includeEmpty: true }, (row) => {
+    const values: Array<string | number> = []
+
+    for (let column = 1; column <= maxColumn; column += 1) {
+      values.push(toLookupCellValue(row.getCell(column).value))
+    }
+
+    rows.push(values)
+  })
+
+  return rows
+}
+
 async function loadTemplateLookups(weeklyTemplateBuffer: ArrayBuffer): Promise<TemplateLookups> {
-  const workbook = XLSX.read(toUint8Array(weeklyTemplateBuffer), { type: 'array' })
-  const sheet2 = workbook.Sheets.Sheet2
-  const catPep = workbook.Sheets.CatPEP
-  const caratula = workbook.Sheets.Caratula
+  const WorkbookCtor = await getExcelWorkbookConstructor()
+  const workbook = new WorkbookCtor()
+  await workbook.xlsx.load(weeklyTemplateBuffer.slice(0))
+
+  const sheet2 = workbook.getWorksheet('Sheet2')
+  const catPep = workbook.getWorksheet('CatPEP')
+  const caratula = workbook.getWorksheet('Caratula')
 
   if (!sheet2 || !catPep || !caratula) {
     throw new Error('La plantilla semanal no contiene las hojas requeridas.')
   }
 
-  const typeRows = XLSX.utils.sheet_to_json<Array<string | number>>(sheet2, { header: 1, defval: '' })
-  const pepRows = XLSX.utils.sheet_to_json<Array<string | number>>(catPep, { header: 1, defval: '' })
+  const typeRows = readLookupRows(sheet2, 4)
+  const pepRows = readLookupRows(catPep, 6)
 
   const serviceTypeByBaseAndEquipment = new Map<string, ServiceTypeLookupRecord>()
   const pepByGzAndType = new Map<string, PepLookupRecord>()
@@ -1109,8 +1156,10 @@ async function loadTemplateLookups(weeklyTemplateBuffer: ArrayBuffer): Promise<T
     )
   }
 
-  const proveedorDefault = Number(caratula.D15?.v ?? REPORT_PROVIDER_DEFAULT) || REPORT_PROVIDER_DEFAULT
-  const gzDefault = String(caratula.D16?.v ?? REPORT_GZ_DEFAULT).trim() || REPORT_GZ_DEFAULT
+  const proveedorDefaultCell = toLookupCellValue(caratula.getCell('D15').value)
+  const gzDefaultCell = toLookupCellValue(caratula.getCell('D16').value)
+  const proveedorDefault = Number(proveedorDefaultCell || REPORT_PROVIDER_DEFAULT) || REPORT_PROVIDER_DEFAULT
+  const gzDefault = String(gzDefaultCell || REPORT_GZ_DEFAULT).trim() || REPORT_GZ_DEFAULT
 
   return {
     proveedorDefault,

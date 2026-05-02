@@ -39,7 +39,7 @@ jobs:
         run: npm ci
 
       - name: Dependency audit
-        run: npm audit --audit-level=moderate
+        run: npm run audit:ci
 
       - name: Typecheck
         run: npm run typecheck
