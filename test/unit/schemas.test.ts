@@ -87,6 +87,8 @@ describe('domain schemas', () => {
     expect(result.fecha_cierre).toBe('2026-04-26')
     expect(cierreSchema.safeParse({ ...result, descripcion: 'corto' }).success).toBe(false)
     expect(cierreSchema.safeParse({ ...result, fecha_cierre: '2026-04-27' }).success).toBe(false)
+    expect(cierreSchema.safeParse({ ...result, aviso: -1 }).success).toBe(false)
+    expect(cierreSchema.safeParse({ ...result, costo_total: -1 }).success).toBe(false)
   })
 
   it('validates inventory, refacciones, and technician stock assignments', () => {
@@ -127,6 +129,20 @@ describe('domain schemas', () => {
       fecha_visita: '',
       costo_refacciones: 0,
     }).success).toBe(true)
+
+    const missingPoliza = crearMantenimientoSchema.safeParse({
+      cliente_id: 10,
+      maquina_id: 20,
+      tecnico_id: TECNICO_ID,
+      fecha_visita: '2026-04-26',
+      status: 'pendiente',
+    })
+    expect(missingPoliza.success).toBe(false)
+    if (!missingPoliza.success) {
+      expect(missingPoliza.error.issues[0]?.message).toBe('Selecciona una póliza')
+    }
+    expect(editarMantenimientoSchema.safeParse({ costo_mano_obra: -1 }).success).toBe(false)
+    expect(editarMantenimientoSchema.safeParse({ costo_refacciones: -1 }).success).toBe(false)
   })
 
   it('enforces employee creation password and confirmation rules', () => {

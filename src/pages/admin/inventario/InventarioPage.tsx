@@ -397,6 +397,30 @@ export function InventarioPage() {
   const handleAdjustSubmit = adjustForm.handleSubmit((values) => {
     if (!itemToAdjust) return
 
+    if (values.tipo === 'salida') {
+      const stockActual = Number(itemToAdjust.stock_actual ?? 0)
+
+      if (stockActual <= 0) {
+        adjustForm.setError('cantidad', {
+          type: 'manual',
+          message: 'No hay stock disponible para registrar una salida.',
+        })
+        return
+      }
+
+      if (values.cantidad > stockActual) {
+        adjustForm.setValue('cantidad', stockActual, {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
+        adjustForm.setError('cantidad', {
+          type: 'manual',
+          message: `Solo hay ${stockActual} pieza(s) disponibles.`,
+        })
+        return
+      }
+    }
+
     ajustarStock({
       ...values,
       inventario_id: itemToAdjust.id,
@@ -444,13 +468,51 @@ export function InventarioPage() {
 
   const adjustTipo = adjustForm.watch('tipo')
   const adjustCantidad = adjustForm.watch('cantidad')
+  const isSalidaSinStock = adjustTipo === 'salida' && itemToAdjust != null && Number(itemToAdjust.stock_actual ?? 0) <= 0
+
+  useEffect(() => {
+    if (!itemToAdjust || adjustTipo !== 'salida') {
+      if (adjustForm.formState.errors.cantidad?.type === 'manual') {
+        adjustForm.clearErrors('cantidad')
+      }
+      return
+    }
+
+    const stockActual = Number(itemToAdjust.stock_actual ?? 0)
+    const cantidad = Number(adjustCantidad)
+
+    if (stockActual <= 0) {
+      adjustForm.setError('cantidad', {
+        type: 'manual',
+        message: 'No hay stock disponible para registrar una salida.',
+      })
+      return
+    }
+
+    if (Number.isFinite(cantidad) && cantidad > stockActual) {
+      adjustForm.setValue('cantidad', stockActual, {
+        shouldDirty: true,
+        shouldValidate: true,
+      })
+      adjustForm.setError('cantidad', {
+        type: 'manual',
+        message: `Solo hay ${stockActual} pieza(s) disponibles.`,
+      })
+      return
+    }
+
+    if (adjustForm.formState.errors.cantidad?.type === 'manual') {
+      adjustForm.clearErrors('cantidad')
+    }
+  }, [adjustCantidad, adjustForm, adjustTipo, itemToAdjust])
+
   const adjustPreview = (() => {
     if (!itemToAdjust) return null
     if (!Number.isFinite(adjustCantidad)) return itemToAdjust.stock_actual
 
     if (adjustTipo === 'ajuste') return adjustCantidad
     if (adjustTipo === 'entrada') return itemToAdjust.stock_actual + adjustCantidad
-    return itemToAdjust.stock_actual - adjustCantidad
+    return Math.max(0, itemToAdjust.stock_actual - adjustCantidad)
   })()
 
   return (
@@ -730,6 +792,7 @@ export function InventarioPage() {
                 id="ajuste_cantidad"
                 type="number"
                 min={1}
+                max={adjustTipo === 'salida' && itemToAdjust ? Math.max(1, itemToAdjust.stock_actual) : undefined}
                 step={1}
                 {...adjustForm.register('cantidad', { valueAsNumber: true })}
               />
@@ -755,7 +818,7 @@ export function InventarioPage() {
               />
             </div>
 
-            <Button type="submit" disabled={isAdjusting} className="w-full bg-ran-navy hover:bg-ran-navy/90">
+            <Button type="submit" disabled={isAdjusting || isSalidaSinStock} className="w-full bg-ran-navy hover:bg-ran-navy/90">
               {isAdjusting ? 'Aplicando ajuste...' : 'Guardar ajuste'}
             </Button>
           </form>

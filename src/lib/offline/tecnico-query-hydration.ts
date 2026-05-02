@@ -36,19 +36,30 @@ export async function hydrateTecnicoOfflineQueryCache(
     tipoServicio: null,
     search: null,
   }
+  const filtrosServiciosCompletados = {
+    ...filtrosServicios,
+    status: 'completado' as const,
+  }
 
-  const [serviciosHoy, inventarioActivo, inventarioTecnicoHoy] = await Promise.all([
+  const [serviciosHoy, serviciosCompletadosHoy, inventarioActivo, inventarioTecnicoHoy] = await Promise.all([
     getCachedServiciosSnapshot(ownerId, filtrosServicios),
+    getCachedServiciosSnapshot(ownerId, filtrosServiciosCompletados),
     getCachedInventarioSnapshot(ownerId, false),
     getCachedInventarioTecnicoSnapshot(ownerId, { fecha, tecnicoId }),
   ])
 
   setOfflineHydratedQueryData(queryClient, serviciosKeys.list(filtrosServicios), serviciosHoy)
+  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(filtrosServiciosCompletados), serviciosCompletadosHoy)
   setOfflineHydratedQueryData(queryClient, inventarioKeys.list(false), inventarioActivo)
   setOfflineHydratedQueryData(queryClient, inventarioKeys.tecnico(fecha, tecnicoId), inventarioTecnicoHoy)
 
+  const serviciosById = new Map<number, typeof serviciosHoy[number]>()
+  for (const servicio of [...serviciosHoy, ...serviciosCompletadosHoy]) {
+    serviciosById.set(servicio.id, servicio)
+  }
+
   await Promise.all(
-    serviciosHoy.map(async (servicio) => {
+    Array.from(serviciosById.values()).map(async (servicio) => {
       const [detalle, evidencias, refacciones] = await Promise.all([
         getCachedServicioDetalleSnapshot(ownerId, servicio.id),
         getCachedEvidenciasByServicio(ownerId, servicio.id),

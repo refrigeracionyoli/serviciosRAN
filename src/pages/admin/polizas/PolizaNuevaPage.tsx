@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { PolizaForm } from '@/components/forms/PolizaForm'
 import { useCrearPolizaMutation } from '@/hooks/use-polizas'
 import { useToast } from '@/hooks/use-toast'
+import { getSpanishErrorMessage } from '@/lib/error-messages'
 import type { CrearPolizaInput } from '@/schemas/poliza.schema'
 
 export function PolizaNuevaPage() {
@@ -22,7 +23,7 @@ export function PolizaNuevaPage() {
         navigate('/polizas')
       },
       onError: (error) => {
-        const message = error instanceof Error ? error.message : 'No se pudo crear la póliza.'
+        const message = getSpanishErrorMessage(error, 'No se pudo crear la póliza.')
         toast({
           title: 'Error al crear póliza',
           description: message,

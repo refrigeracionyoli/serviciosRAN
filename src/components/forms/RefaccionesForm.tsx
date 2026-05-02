@@ -368,8 +368,8 @@ export function RefaccionesForm({
 
   const canAddRefaccion = !requireCatalogSelection || Boolean(getNextAddableInventoryItem())
 
-  return (
-    <form onSubmit={handleSubmit((d) => onSubmit(d.refacciones))} className="space-y-4">
+  const content = (
+    <>
       <div className="space-y-3">
         {fields.map((field, index) => {
           const selectedInventarioId = refacciones[index]?.inventario_id
@@ -517,6 +517,16 @@ export function RefaccionesForm({
           {isLoading ? 'Guardando…' : 'Guardar refacciones'}
         </Button>
       )}
+    </>
+  )
+
+  if (!showSubmitButton) {
+    return <div className="space-y-4">{content}</div>
+  }
+
+  return (
+    <form onSubmit={handleSubmit((d) => onSubmit(d.refacciones))} className="space-y-4">
+      {content}
     </form>
   )
 }

@@ -119,7 +119,7 @@ export function MantenimientoDetallePage() {
     )
     if (refaccionInvalida) {
       toast({
-        title: 'Refaccion invalida',
+        title: 'Refacción inválida',
         description: 'Revisa nombre, cantidad y precio unitario en las refacciones capturadas.',
         variant: 'destructive',
       })
@@ -265,7 +265,7 @@ export function MantenimientoDetallePage() {
                 {mantenimiento.cliente?.nombre ?? '—'}
               </p>
               <p>
-                <span className="font-semibold text-ran-navy">Maquina:</span>{' '}
+                <span className="font-semibold text-ran-navy">Máquina:</span>{' '}
                 {mantenimiento.maquina?.serie
                   ? `${mantenimiento.maquina.serie} - ${mantenimiento.maquina.modelo}`
                   : '—'}

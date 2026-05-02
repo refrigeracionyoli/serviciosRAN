@@ -18,6 +18,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { useClientesQuery, useCrearClienteMutation } from '@/hooks/use-clientes'
 import { useCrearMaquinaMutation, useMaquinasQuery } from '@/hooks/use-maquinas'
+import { getSpanishErrorMessage } from '@/lib/error-messages'
 import { crearClienteSchema, type CrearClienteInput } from '@/schemas/cliente.schema'
 
 interface ClienteCodigoLookup {
@@ -218,7 +219,7 @@ export function ClienteNuevoPage() {
     } catch (error) {
       toast({
         title: 'Error al registrar cliente',
-        description: error instanceof Error ? error.message : 'No se pudo guardar la información.',
+        description: getSpanishErrorMessage(error, 'No se pudo guardar la información.'),
         variant: 'destructive',
       })
     }

@@ -152,30 +152,44 @@ export function TecnicoHomePage() {
       })
   }, [serviciosCompletados, today, user?.id])
 
-  const mantenimientosAsignados = useMemo(() => {
+  const mantenimientosEnRutaDelDia = useMemo(() => {
     return mantenimientos
       .filter((mantenimiento) => {
         if (!user?.id) return true
-        return mantenimiento.tecnico_id === user.id || mantenimiento.tecnico?.id === user.id
+        return (
+          mantenimiento.status === 'en_ruta'
+          && mantenimiento.fecha_visita === today
+          && (mantenimiento.tecnico_id === user.id || mantenimiento.tecnico?.id === user.id)
+        )
       })
       .sort((left, right) => {
-        const leftActivo = left.status === 'pendiente' || left.status === 'en_ruta'
-        const rightActivo = right.status === 'pendiente' || right.status === 'en_ruta'
-
-        if (leftActivo !== rightActivo) {
-          return leftActivo ? -1 : 1
-        }
-
         const leftDate = left.fecha_visita ?? left.created_at
         const rightDate = right.fecha_visita ?? right.created_at
         return leftDate.localeCompare(rightDate)
       })
-  }, [mantenimientos, user?.id])
+  }, [mantenimientos, today, user?.id])
+
+  const mantenimientosRealizadosDelDia = useMemo(() => {
+    return mantenimientos
+      .filter((mantenimiento) => {
+        if (!user?.id) return true
+        return (
+          mantenimiento.status === 'realizado'
+          && mantenimiento.fecha_visita === today
+          && (mantenimiento.tecnico_id === user.id || mantenimiento.tecnico?.id === user.id)
+        )
+      })
+      .sort((left, right) => {
+        const leftDate = left.fecha_visita ?? left.created_at
+        const rightDate = right.fecha_visita ?? right.created_at
+        return rightDate.localeCompare(leftDate)
+      })
+  }, [mantenimientos, today, user?.id])
 
   const activos = serviciosDelDia
   const finalizados = serviciosCompletadosDelDia
-  const mantenimientosActivos = mantenimientosAsignados.filter((mantenimiento) => mantenimiento.status === 'pendiente' || mantenimiento.status === 'en_ruta')
-  const mantenimientosFinalizados = mantenimientosAsignados.filter((mantenimiento) => mantenimiento.status === 'realizado')
+  const mantenimientosActivos = mantenimientosEnRutaDelDia
+  const mantenimientosFinalizados = mantenimientosRealizadosDelDia
   const totalAsignados = activos.length + mantenimientosActivos.length
   const totalFinalizados = finalizados.length + mantenimientosFinalizados.length
   const hasAsignaciones = totalAsignados > 0 || totalFinalizados > 0

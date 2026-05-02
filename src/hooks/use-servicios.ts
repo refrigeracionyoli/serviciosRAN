@@ -23,10 +23,10 @@ import {
   getCachedServicioRefaccionesSnapshot,
   getCachedServiciosSnapshot,
   isLocalNumberId,
+  replaceCachedServiciosListSnapshot,
   replaceCachedEvidenciasForServicio,
   upsertCachedServicio,
   upsertCachedServicioRefacciones,
-  upsertCachedServicios,
 } from '@/lib/offline/cache'
 import { settleQueuedCommand } from '@/lib/offline/sync-engine'
 import type { RefaccionInput } from '@/schemas/inventario.schema'
@@ -255,7 +255,7 @@ export function useServiciosQuery(filtros?: FiltrosServicio, options?: Servicios
 
           const { data, error } = await query
           if (error) throw error
-          await upsertCachedServicios(ownerId, data as Servicio[])
+          await replaceCachedServiciosListSnapshot(ownerId, data as Servicio[], normalizedFilters)
           return getCachedServiciosSnapshot(ownerId, normalizedFilters)
         },
         local: () => getCachedServiciosSnapshot(ownerId, normalizedFilters),

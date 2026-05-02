@@ -129,7 +129,7 @@ export function CierreForm({
   }
 
   return (
-    <form onSubmit={handleCierreSubmit} className="space-y-4">
+    <form onSubmit={handleCierreSubmit} className="space-y-4" noValidate>
       <input type="hidden" {...register('servicio_id', { valueAsNumber: true })} />
 
       {/* Aviso SAP */}
@@ -138,6 +138,9 @@ export function CierreForm({
         <Input
           id="aviso"
           type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
           {...register('aviso', {
             setValueAs: (value: string) => (value === '' ? undefined : Number(value)),
           })}
@@ -257,12 +260,17 @@ export function CierreForm({
         <Input
           id="costo_total"
           type="number"
+          min={0}
           step="0.01"
+          inputMode="decimal"
           {...register('costo_total', {
             setValueAs: (value: string) => (value === '' ? null : Number(value)),
           })}
           placeholder="0.00"
         />
+        {errors.costo_total && (
+          <p className="text-xs text-destructive">{errors.costo_total.message}</p>
+        )}
       </div>
 
       {/* Firma receptor */}

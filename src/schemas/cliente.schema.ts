@@ -12,6 +12,20 @@ function isNotFutureIsoDate(value: string): boolean {
   return value <= getTodayIsoDate()
 }
 
+function normalizeNumericInput(value: unknown): unknown {
+  if (value === '' || value == null) return undefined
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    return Number.isNaN(parsed) ? Number.NaN : parsed
+  }
+  return value
+}
+
+function normalizeNullableNumericInput(value: unknown): unknown {
+  const normalized = normalizeNumericInput(value)
+  return typeof normalized === 'undefined' ? null : normalized
+}
+
 const optionalNullableTelefono = z.preprocess(
   (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
   z.string().max(20).optional().nullable(),
@@ -68,14 +82,15 @@ export const editarMaquinaSchema = crearMaquinaSchema.partial()
 export const cierreSchema = z.object({
   servicio_id: z.number().int().positive(),
   aviso: z.preprocess(
-    (value) => (value === '' || value == null ? undefined : value),
+    normalizeNumericInput,
     z
       .number({
         required_error: 'Ingresa el aviso SAP',
         invalid_type_error: 'Ingresa el aviso SAP',
       })
       .int({ message: 'El aviso SAP debe ser un número entero' })
-      .positive({ message: 'El aviso SAP debe ser mayor a 0' }),
+      .positive({ message: 'El aviso SAP debe ser mayor a 0' })
+      .refine((value) => !Object.is(value, -0), { message: 'El aviso SAP debe ser mayor a 0' }),
   ),
   parte_objeto: z.string().max(50).optional().nullable(),
   causa: z.string().max(50).optional().nullable(),
@@ -83,7 +98,17 @@ export const cierreSchema = z.object({
     .string()
     .min(10, { message: 'La descripción debe tener al menos 10 caracteres' })
     .max(1000),
-  costo_total: z.number().nonnegative().optional().nullable(),
+  costo_total: z.preprocess(
+    normalizeNullableNumericInput,
+    z
+      .number({
+        invalid_type_error: 'Ingresa un costo reportado válido',
+      })
+      .nonnegative({ message: 'El costo reportado no puede ser negativo' })
+      .refine((value) => !Object.is(value, -0), { message: 'El costo reportado no puede ser negativo' })
+      .optional()
+      .nullable(),
+  ),
   tecnico_id: z.string().uuid({ message: 'Selecciona un técnico' }),
   fecha_cierre: z
     .string()

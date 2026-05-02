@@ -1183,7 +1183,7 @@ export function ServicioForm({
                 onChange={(event) => handleCostoChange(event.target.value)}
                 onFocus={() => {
                   setIsCostoFocused(true)
-                  setCostoDisplayValue(formatCurrencyForEditing(costoManoObra))
+                  setCostoDisplayValue(Number(costoManoObra ?? 0) === 0 ? '' : formatCurrencyForEditing(costoManoObra))
                 }}
                 onBlur={() => {
                   setIsCostoFocused(false)

@@ -371,7 +371,7 @@ export function MaquinasTallerPage() {
       } else {
         maquinaId = parseSelectNumber(registroMaquinaId)
         if (!maquinaId) {
-          throw new Error('Selecciona una maquina para registrarla en taller.')
+          throw new Error('Selecciona una máquina para registrarla en taller.')
         }
       }
 
@@ -391,13 +391,13 @@ export function MaquinasTallerPage() {
       resetRegistroForm()
 
       toast({
-        title: 'Maquina registrada',
-        description: 'El ingreso manual en taller se guardo correctamente.',
+        title: 'Máquina registrada',
+        description: 'El ingreso manual en taller se guardó correctamente.',
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo registrar la maquina en taller.'
+      const message = error instanceof Error ? error.message : 'No se pudo registrar la máquina en taller.'
       toast({
-        title: 'Error al registrar maquina',
+        title: 'Error al registrar máquina',
         description: message,
         variant: 'destructive',
       })
@@ -463,8 +463,8 @@ export function MaquinasTallerPage() {
     <>
       <div>
         <PageHeader
-          title="Maquinas en taller"
-          description="Seguimiento claro de equipos en taller vs historico cerrado por instalacion, Urban u otros motivos."
+          title="Máquinas en taller"
+          description="Seguimiento claro de equipos en taller vs histórico cerrado por instalación, Urban u otros motivos."
           actions={(
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -472,22 +472,17 @@ export function MaquinasTallerPage() {
                 className="h-10 rounded-xl"
                 onClick={() => navigate('/catalogos/maquinas')}
               >
-                Catalogo de maquinas
+                Catálogo de máquinas
               </Button>
               <Button className="h-10 rounded-xl bg-ran-navy px-4 hover:bg-ran-navy/90" onClick={handleAbrirRegistroDialog}>
                 <Plus className="mr-1.5 h-4 w-4" />
-                Registrar maquina
+                Registrar máquina
               </Button>
             </div>
           )}
         />
 
         <div className="space-y-4 p-5 lg:p-7">
-          <p className="text-sm text-ran-slate">
-            Esta vista se actualiza automaticamente desde <span className="font-semibold text-ran-navy">Servicios</span> al completar/cerrar
-            tipos de retiro, instalacion y envio a Urban. El boton <span className="font-semibold text-ran-navy">Registrar maquina</span> es solo para ingresos manuales.
-          </p>
-
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[350px_minmax(0,1fr)]">
             <aside className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between gap-3">
@@ -590,23 +585,25 @@ export function MaquinasTallerPage() {
                         )}
                         onClick={() => setSelectedRegistroId(registro.id)}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
                             <p className="truncate text-sm font-semibold text-ran-navy">
-                              {registro.maquina?.serie ?? `Maquina #${registro.maquina_id}`}
+                              {registro.maquina?.serie ?? `Máquina #${registro.maquina_id}`}
                             </p>
                             <p className="truncate text-xs text-ran-slate">
                               {registro.maquina?.modelo ?? 'Sin modelo'} · {registro.cliente?.nombre ?? registro.maquina?.cliente?.nombre ?? 'Sin cliente'}
                             </p>
                           </div>
-                          <Badge variant="outline" className={getRegistroCategoriaClass(categoria)}>
-                            {getRegistroCategoriaLabel(categoria)}
-                          </Badge>
-                          {instalacionPendiente && (
-                            <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">
-                              Instalación pendiente
+                          <div className="flex shrink-0 flex-col items-end gap-1">
+                            <Badge variant="outline" className={cn('whitespace-nowrap', getRegistroCategoriaClass(categoria))}>
+                              {getRegistroCategoriaLabel(categoria)}
                             </Badge>
-                          )}
+                            {instalacionPendiente && (
+                              <Badge variant="outline" className="whitespace-nowrap border-amber-200 bg-amber-100 text-amber-800">
+                                Instalación pendiente
+                              </Badge>
+                            )}
+                          </div>
                         </div>
 
                         <p className="mt-2 text-xs text-ran-slate">
@@ -642,9 +639,9 @@ export function MaquinasTallerPage() {
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                    <p className="text-sm font-medium text-ran-slate">Salidas por instalacion</p>
+                    <p className="text-sm font-medium text-ran-slate">Salidas por instalación</p>
                     <p className="mt-1 text-3xl font-extrabold text-green-700">{conteoCategorias.instalacion}</p>
-                    <p className="text-xs text-ran-slate">Registros cerrados por instalacion</p>
+                    <p className="text-xs text-ran-slate">Registros cerrados por instalación</p>
                   </div>
 
                   <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -656,7 +653,7 @@ export function MaquinasTallerPage() {
                   <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                     <p className="text-sm font-medium text-ran-slate">Otras cerradas</p>
                     <p className="mt-1 text-3xl font-extrabold text-ran-navy">{conteoCategorias.cerradas_otras}</p>
-                    <p className="text-xs text-ran-slate">Registros historicos adicionales</p>
+                    <p className="text-xs text-ran-slate">Registros históricos adicionales</p>
                   </div>
                 </div>
               )}
@@ -666,28 +663,28 @@ export function MaquinasTallerPage() {
                   <AdminCardListSkeleton count={3} />
                 ) : !registroSeleccionado ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-ran-slate">
-                    Selecciona una maquina de la lista para ver su detalle.
+                    Selecciona una máquina de la lista para ver su detalle.
                   </div>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <h3 className="text-lg font-bold text-ran-navy">
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate text-lg font-bold text-ran-navy">
                           {registroSeleccionado.maquina?.modelo ?? 'Equipo'} · {registroSeleccionado.maquina?.serie ?? `#${registroSeleccionado.maquina_id}`}
                         </h3>
-                        <p className="mt-1 text-sm text-ran-slate">
+                        <p className="mt-1 truncate text-sm text-ran-slate">
                           {registroSeleccionado.cliente?.nombre ?? registroSeleccionado.maquina?.cliente?.nombre ?? 'Sin cliente asignado'}
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                         {categoriaRegistroSeleccionado && (
-                          <Badge variant="outline" className={getRegistroCategoriaClass(categoriaRegistroSeleccionado)}>
+                          <Badge variant="outline" className={cn('whitespace-nowrap', getRegistroCategoriaClass(categoriaRegistroSeleccionado))}>
                             {getRegistroCategoriaLabel(categoriaRegistroSeleccionado)}
                           </Badge>
                         )}
                         {instalacionPendienteSeleccionada && categoriaRegistroSeleccionado === 'en_taller' && (
-                          <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">
+                          <Badge variant="outline" className="whitespace-nowrap border-amber-200 bg-amber-100 text-amber-800">
                             Instalación pendiente
                           </Badge>
                         )}
@@ -760,9 +757,9 @@ export function MaquinasTallerPage() {
                     </div>
 
                     <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                      <p className="text-xs font-semibold text-ran-slate">Diagnostico</p>
+                      <p className="text-xs font-semibold text-ran-slate">Diagnóstico</p>
                       <p className="mt-1 text-sm text-ran-slate">
-                        {registroSeleccionado.diagnostico ?? 'Sin diagnostico registrado.'}
+                        {registroSeleccionado.diagnostico ?? 'Sin diagnóstico registrado.'}
                       </p>
                     </div>
                   </>
@@ -772,10 +769,10 @@ export function MaquinasTallerPage() {
               <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-lg font-bold text-ran-navy">Ultimos movimientos</h3>
+                    <h3 className="text-lg font-bold text-ran-navy">Últimos movimientos</h3>
                     <p className="text-sm text-ran-slate">
                       {registroSeleccionado
-                        ? `Trazabilidad de ${registroSeleccionado.maquina?.serie ?? `maquina #${registroSeleccionado.maquina_id}`}`
+                        ? `Trazabilidad de ${registroSeleccionado.maquina?.serie ?? `máquina #${registroSeleccionado.maquina_id}`}`
                         : 'Selecciona un registro para ver movimientos.'}
                     </p>
                   </div>
@@ -783,13 +780,13 @@ export function MaquinasTallerPage() {
 
                 {!registroSeleccionado ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-ran-slate">
-                    Sin maquina seleccionada.
+                    Sin máquina seleccionada.
                   </div>
                 ) : loadingMovimientos ? (
                   <AdminCardListSkeleton count={4} />
                 ) : movimientosMaquina.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-5 text-sm text-ran-slate">
-                    Esta maquina aun no tiene movimientos registrados.
+                    Esta máquina aún no tiene movimientos registrados.
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -838,7 +835,7 @@ export function MaquinasTallerPage() {
       <Dialog open={openRegistroDialog} onOpenChange={setOpenRegistroDialog}>
         <DialogContent className="max-w-xl rounded-2xl border border-slate-200 p-0">
           <DialogHeader className="border-b border-slate-200 px-6 py-4">
-            <DialogTitle className="text-ran-navy">Registrar maquina en taller</DialogTitle>
+            <DialogTitle className="text-ran-navy">Registrar máquina en taller</DialogTitle>
             <DialogDescription>
               Registra ingresos externos/manuales o prepara una máquina existente para instalación sin depender de un servicio de retiro.
             </DialogDescription>
@@ -853,7 +850,7 @@ export function MaquinasTallerPage() {
                     <SelectValue placeholder="Seleccionar motivo" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="instalacion">Preparacion para instalacion</SelectItem>
+                    <SelectItem value="instalacion">Preparación para instalación</SelectItem>
                     <SelectItem value="manual">Ingreso externo/manual</SelectItem>
                   </SelectContent>
                 </Select>
@@ -906,10 +903,10 @@ export function MaquinasTallerPage() {
                   <Label>Máquina</Label>
                   <Select value={registroMaquinaId} onValueChange={setRegistroMaquinaId}>
                     <SelectTrigger className="h-10 rounded-xl">
-                      <SelectValue placeholder="Seleccionar maquina" />
+                      <SelectValue placeholder="Seleccionar máquina" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Seleccionar maquina</SelectItem>
+                      <SelectItem value="none">Seleccionar máquina</SelectItem>
                       {maquinasDisponibles.map((maquina) => (
                         <SelectItem key={maquina.id} value={String(maquina.id)}>
                           {maquina.modelo} · {maquina.serie}
@@ -983,7 +980,7 @@ export function MaquinasTallerPage() {
                 className="h-10 rounded-xl bg-ran-navy px-5 hover:bg-ran-navy/90"
                 disabled={isSubmittingRegistro || (!isRegistroManual && maquinasDisponibles.length === 0)}
               >
-                {isSubmittingRegistro ? 'Registrando...' : 'Registrar maquina'}
+                {isSubmittingRegistro ? 'Registrando...' : 'Registrar máquina'}
               </Button>
             </div>
           </form>

@@ -1,9 +1,9 @@
 import {
   replaceCachedEvidenciasForServicio,
+  replaceCachedServiciosListSnapshot,
   upsertCachedInventario,
   upsertCachedInventarioTecnico,
   upsertCachedServicioRefacciones,
-  upsertCachedServicios,
 } from '@/lib/offline/cache'
 import { markTecnicoPreloadCompleted, readTecnicoPreloadState } from '@/lib/offline/tecnico-preload-state'
 import { supabase } from '@/lib/supabase'
@@ -164,13 +164,34 @@ export async function preloadTecnicoOfflineData(
   }
 
   const task = (async () => {
+    const filtrosServiciosEnRuta = {
+      status: 'en_ruta' as const,
+      tecnicoId,
+      clienteId: null,
+      fechaDesde: fecha,
+      fechaHasta: fecha,
+      tipoServicio: null,
+      search: null,
+    }
+    const filtrosServiciosCompletados = {
+      ...filtrosServiciosEnRuta,
+      status: 'completado' as const,
+    }
     const inventarioTecnicoPromise = fetchInventarioTecnicoRowsForBootstrap(tecnicoId, fecha)
-    const [serviciosResponse, inventarioTecnicoResponse, inventarioResponse] = await Promise.all([
+    const [serviciosEnRutaResponse, serviciosCompletadosResponse, inventarioTecnicoResponse, inventarioResponse] = await Promise.all([
       supabase
         .from('servicios')
         .select(SELECT_SERVICIO)
         .eq('tecnico_id', tecnicoId)
         .eq('status', 'en_ruta')
+        .gte('fecha_servicio', fecha)
+        .lte('fecha_servicio', fecha)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('servicios')
+        .select(SELECT_SERVICIO)
+        .eq('tecnico_id', tecnicoId)
+        .eq('status', 'completado')
         .gte('fecha_servicio', fecha)
         .lte('fecha_servicio', fecha)
         .order('created_at', { ascending: false }),
@@ -182,16 +203,24 @@ export async function preloadTecnicoOfflineData(
         .order('nombre'),
     ])
 
-    if (serviciosResponse.error) throw serviciosResponse.error
+    if (serviciosEnRutaResponse.error) throw serviciosEnRutaResponse.error
+    if (serviciosCompletadosResponse.error) throw serviciosCompletadosResponse.error
     if (inventarioResponse.error) throw inventarioResponse.error
 
-    const servicios = (serviciosResponse.data ?? []) as Servicio[]
+    const serviciosEnRuta = (serviciosEnRutaResponse.data ?? []) as Servicio[]
+    const serviciosCompletados = (serviciosCompletadosResponse.data ?? []) as Servicio[]
+    const serviciosById = new Map<number, Servicio>()
+    for (const servicio of [...serviciosEnRuta, ...serviciosCompletados]) {
+      serviciosById.set(servicio.id, servicio)
+    }
+    const servicios = Array.from(serviciosById.values())
     const inventarioTecnico = inventarioTecnicoResponse
     const inventario = (inventarioResponse.data ?? []) as ItemInventario[]
 
-    if (servicios.length > 0) {
-      await upsertCachedServicios(ownerId, servicios)
-    }
+    await Promise.all([
+      replaceCachedServiciosListSnapshot(ownerId, serviciosEnRuta, filtrosServiciosEnRuta),
+      replaceCachedServiciosListSnapshot(ownerId, serviciosCompletados, filtrosServiciosCompletados),
+    ])
 
     if (inventario.length > 0) {
       await upsertCachedInventario(ownerId, inventario)

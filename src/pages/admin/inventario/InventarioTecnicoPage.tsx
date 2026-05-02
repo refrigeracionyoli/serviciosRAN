@@ -201,7 +201,7 @@ export function InventarioTecnicoPage() {
     const item = inventarioById.get(inventarioId)
     if (!item) {
       toast({
-        title: 'Refaccion no disponible',
+        title: 'Refacción no disponible',
         description: 'No se encontró la refacción en el inventario local.',
         variant: 'destructive',
       })
@@ -232,8 +232,8 @@ export function InventarioTecnicoPage() {
 
     if (!selectedTecnicoId) {
       toast({
-        title: 'Selecciona un tecnico',
-        description: 'Primero elige un tecnico en la lista.',
+        title: 'Selecciona un técnico',
+        description: 'Primero elige un técnico en la lista.',
         variant: 'destructive',
       })
       return
@@ -244,8 +244,8 @@ export function InventarioTecnicoPage() {
 
     if (!Number.isInteger(parsedInventarioId) || parsedInventarioId < 1) {
       toast({
-        title: 'Refaccion invalida',
-        description: 'Selecciona una refaccion valida.',
+        title: 'Refacción inválida',
+        description: 'Selecciona una refacción válida.',
         variant: 'destructive',
       })
       return
@@ -253,7 +253,7 @@ export function InventarioTecnicoPage() {
 
     if (!parsedCantidad) {
       toast({
-        title: 'Cantidad invalida',
+        title: 'Cantidad inválida',
         description: 'La cantidad debe ser mayor a 0.',
         variant: 'destructive',
       })
@@ -294,15 +294,15 @@ export function InventarioTecnicoPage() {
           const itemNombre = inventario.find((item) => item.id === parsedInventarioId)?.nombre ?? `Item ${parsedInventarioId}`
 
           toast({
-            title: existingRow ? 'Cantidad actualizada' : 'Refaccion agregada',
-            description: `${tecnicoSeleccionado?.nombre ?? 'Tecnico'} ahora tiene ${nextCantidad} de ${itemNombre}.`,
+            title: existingRow ? 'Cantidad actualizada' : 'Refacción agregada',
+            description: `${tecnicoSeleccionado?.nombre ?? 'Técnico'} ahora tiene ${nextCantidad} de ${itemNombre}.`,
           })
 
           setNuevoInventarioId('')
           setNuevoCantidad('1')
         },
         onError: (error) => {
-          const message = error instanceof Error ? error.message : 'No se pudo guardar el inventario tecnico.'
+          const message = error instanceof Error ? error.message : 'No se pudo guardar el inventario técnico.'
           toast({
             title: 'Error al guardar',
             description: message,
@@ -329,7 +329,7 @@ export function InventarioTecnicoPage() {
 
     if (!parsedCantidad) {
       toast({
-        title: 'Cantidad invalida',
+        title: 'Cantidad inválida',
         description: 'La cantidad debe ser mayor a 0.',
         variant: 'destructive',
       })
@@ -450,12 +450,12 @@ export function InventarioTecnicoPage() {
           })
 
           toast({
-            title: 'Refaccion eliminada del tecnico',
-            description: `Se elimino ${deleted.itemNombre} de ${deleted.tecnicoNombre}.`,
+            title: 'Refacción eliminada del técnico',
+            description: `Se eliminó ${deleted.itemNombre} de ${deleted.tecnicoNombre}.`,
           })
         },
         onError: (error) => {
-          const message = error instanceof Error ? error.message : 'No se pudo eliminar la refaccion.'
+          const message = error instanceof Error ? error.message : 'No se pudo eliminar la refacción.'
           toast({
             title: 'Error al eliminar',
             description: message,
@@ -469,8 +469,8 @@ export function InventarioTecnicoPage() {
   return (
     <div className="p-5 lg:p-7">
       <div className="mb-4">
-        <h1 className="text-4xl font-extrabold tracking-tight text-ran-navy">Inventario por tecnico</h1>
-        <p className="mt-1 text-lg text-ran-slate">Selecciona un tecnico para ver y editar sus refacciones del dia.</p>
+        <h1 className="text-4xl font-extrabold tracking-tight text-ran-navy">Inventario por técnico</h1>
+        <p className="mt-1 text-lg text-ran-slate">Selecciona un técnico para ver y editar sus refacciones del día.</p>
       </div>
 
       <InventarioSubNav />
@@ -484,7 +484,7 @@ export function InventarioTecnicoPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label>Buscar tecnico</Label>
+              <Label>Buscar técnico</Label>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ran-slate" />
                 <Input
@@ -502,7 +502,7 @@ export function InventarioTecnicoPage() {
               <AdminCardListSkeleton count={5} />
             ) : tecnicosFiltrados.length === 0 ? (
               <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-sm text-ran-slate">
-                No hay tecnicos con ese filtro.
+                No hay técnicos con ese filtro.
               </p>
             ) : (
               tecnicosFiltrados.map((tecnico) => {
@@ -535,8 +535,8 @@ export function InventarioTecnicoPage() {
               <AdminCardListSkeleton count={4} />
             ) : (
               <EmptyState
-                title="Selecciona un tecnico"
-                description="Elige un tecnico de la lista para administrar sus refacciones."
+                title="Selecciona un técnico"
+                description="Elige un técnico de la lista para administrar sus refacciones."
               />
             )
           ) : (
@@ -571,8 +571,8 @@ export function InventarioTecnicoPage() {
                 </div>
               ) : (
                 <div className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-sm font-semibold text-ran-navy">Agregar refaccion</p>
-                  <p className="mt-0.5 text-xs text-ran-slate">Si la refaccion ya existe, se suma a la cantidad actual.</p>
+                  <p className="text-sm font-semibold text-ran-navy">Agregar refacción</p>
+                  <p className="mt-0.5 text-xs text-ran-slate">Si la refacción ya existe, se suma a la cantidad actual.</p>
 
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-[1fr_140px_auto]">
                     <Select
@@ -586,7 +586,7 @@ export function InventarioTecnicoPage() {
                       }}
                     >
                       <SelectTrigger className="h-10 rounded-xl bg-white">
-                        <SelectValue placeholder="Seleccionar refaccion" />
+                        <SelectValue placeholder="Seleccionar refacción" />
                       </SelectTrigger>
                       <SelectContent>
                         {inventario.map((item) => (
@@ -629,8 +629,8 @@ export function InventarioTecnicoPage() {
                 <EmptyState
                   title={isHistoryView ? 'Sin historial de refacciones' : 'Sin refacciones asignadas'}
                   description={isHistoryView
-                    ? 'Este tecnico no tiene movimientos de inventario técnico registrados para la fecha seleccionada.'
-                    : 'Este tecnico no tiene refacciones registradas para la fecha seleccionada.'}
+                    ? 'Este técnico no tiene movimientos de inventario técnico registrados para la fecha seleccionada.'
+                    : 'Este técnico no tiene refacciones registradas para la fecha seleccionada.'}
                 />
               ) : (
                 <div className="space-y-2">
@@ -738,10 +738,10 @@ export function InventarioTecnicoPage() {
         onOpenChange={(open) => {
           if (!open) setRowToDelete(null)
         }}
-        title="Eliminar refaccion del tecnico"
+        title="Eliminar refacción del técnico"
         description={rowToDelete
-          ? `Se devolvera ${rowToDelete.cantidad} de ${rowToDelete.item?.nombre ?? `Item ${rowToDelete.inventario_id}`} al inventario general.`
-          : 'Confirma para eliminar la refaccion seleccionada.'}
+          ? `Se devolverá ${rowToDelete.cantidad} de ${rowToDelete.item?.nombre ?? `Item ${rowToDelete.inventario_id}`} al inventario general.`
+          : 'Confirma para eliminar la refacción seleccionada.'}
         confirmLabel="Eliminar"
         variant="destructive"
         onConfirm={handleConfirmarEliminar}

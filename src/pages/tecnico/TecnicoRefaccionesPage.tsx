@@ -52,6 +52,8 @@ interface InventarioTecnicoOption {
   restanteRuta: number
 }
 
+const EMPTY_REFACCIONES: ServicioRefaccion[] = []
+
 function createDraftRow(inventarioId: number, cantidad = 1): DraftRow {
   return {
     id: crypto.randomUUID(),
@@ -75,6 +77,26 @@ function buildDraftRows(refacciones: ServicioRefaccion[]) {
   return refacciones
     .filter((item) => item.inventory_source === 'tecnico' && typeof item.inventario_id === 'number')
     .map((item) => createDraftRow(item.inventario_id!, item.cantidad))
+}
+
+function areDraftRowsEquivalent(left: DraftRow[], right: DraftRow[]) {
+  if (left.length !== right.length) return false
+
+  return left.every((row, index) => {
+    const nextRow = right[index]
+    return row.inventarioId === nextRow.inventarioId && row.cantidad === nextRow.cantidad
+  })
+}
+
+function clampDraftCantidad(rawValue: string, maxCantidad: number): string {
+  if (rawValue.trim() === '') return ''
+
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed)) return '1'
+
+  const normalized = Math.max(1, Math.trunc(parsed))
+  const safeMax = Math.max(1, Math.trunc(maxCantidad))
+  return String(Math.min(normalized, safeMax))
 }
 
 function getSaveMessage(syncStatus: 'pending' | 'synced' | 'failed' | 'conflict') {
@@ -187,7 +209,8 @@ export function TecnicoRefaccionesPage() {
   const { user } = useAuth()
 
   const { data: servicio, isLoading: loadingServicio } = useServicioDetalleQuery(servicioId)
-  const { data: refaccionesData = [], isLoading: loadingRefacciones } = useServicioRefaccionesQuery(servicioId)
+  const { data: refaccionesQueryData, isLoading: loadingRefacciones } = useServicioRefaccionesQuery(servicioId)
+  const refaccionesData = refaccionesQueryData ?? EMPTY_REFACCIONES
   const { data: evidencias = [], isLoading: loadingEvidencias } = useEvidenciasQuery(servicioId)
   const inventarioFecha = servicio?.fecha_servicio ?? formatLocalIsoDate()
   const {
@@ -209,7 +232,10 @@ export function TecnicoRefaccionesPage() {
   ), [refaccionesData])
 
   useEffect(() => {
-    setDraftRows(buildDraftRows(refaccionesTecnico))
+    const nextRows = buildDraftRows(refaccionesTecnico)
+    setDraftRows((currentRows) => (
+      areDraftRowsEquivalent(currentRows, nextRows) ? currentRows : nextRows
+    ))
   }, [refaccionesTecnico])
 
   const savedByInventarioId = useMemo(() => (
@@ -361,9 +387,14 @@ export function TecnicoRefaccionesPage() {
       return
     }
 
+    const option = optionByInventarioId.get(inventarioId)
     setDraftRows((current) => current.map((row) => (
       row.id === rowId
-        ? { ...row, inventarioId, cantidad: row.cantidad || '1' }
+        ? {
+            ...row,
+            inventarioId,
+            cantidad: option ? clampDraftCantidad(row.cantidad || '1', option.disponible) : row.cantidad || '1',
+          }
         : row
     )))
   }
@@ -550,14 +581,22 @@ export function TecnicoRefaccionesPage() {
                             <SelectValue placeholder="Selecciona una refacción" />
                           </SelectTrigger>
                           <SelectContent>
-                            {inventarioOptions.map((currentOption) => (
-                              <SelectItem
-                                key={currentOption.inventarioId}
-                                value={String(currentOption.inventarioId)}
-                              >
-                                {currentOption.nombre}
-                              </SelectItem>
-                            ))}
+                            {inventarioOptions
+                              .filter((currentOption) => (
+                                currentOption.inventarioId === row.inventarioId
+                                || !draftRows.some((draftRow) => (
+                                  draftRow.id !== row.id
+                                  && draftRow.inventarioId === currentOption.inventarioId
+                                ))
+                              ))
+                              .map((currentOption) => (
+                                <SelectItem
+                                  key={currentOption.inventarioId}
+                                  value={String(currentOption.inventarioId)}
+                                >
+                                  {currentOption.nombre}
+                                </SelectItem>
+                              ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -572,9 +611,10 @@ export function TecnicoRefaccionesPage() {
                             name={`servicio_refaccion_cantidad_${row.id}`}
                             type="number"
                             min="1"
+                            max={option.disponible}
                             value={row.cantidad}
                             onChange={(event) => {
-                              const nextValue = event.target.value
+                              const nextValue = clampDraftCantidad(event.target.value, option.disponible)
                               setDraftRows((current) => current.map((currentRow) => (
                                 currentRow.id === row.id
                                   ? { ...currentRow, cantidad: nextValue }

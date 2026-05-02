@@ -78,7 +78,7 @@ export function MantenimientoForm({
   const tecnicoId = watch('tecnico_id')
   const status = watch('status')
   const costoManoObra = watch('costo_mano_obra')
-  const costoManoObraSeguro = Number.isFinite(costoManoObra) ? Math.max(0, Number(costoManoObra)) : 0
+  const costoManoObraPreview = Number.isFinite(costoManoObra) ? Number(costoManoObra) : 0
   const selectedPoliza = polizas.find((p) => p.id === polizaId)
 
   useEffect(() => {
@@ -109,7 +109,7 @@ export function MantenimientoForm({
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
       {/* Póliza */}
       <div className="space-y-1.5">
         <Label>Póliza *</Label>
@@ -171,13 +171,13 @@ export function MantenimientoForm({
       {/* Status */}
       {!hideStatusField ? (
         <div className="space-y-1.5">
-          <Label>Status inicial</Label>
+          <Label>Estado inicial</Label>
           <Select
             value={status ?? 'pendiente'}
             onValueChange={(value) => setValue('status', value as 'pendiente' | 'en_ruta' | 'realizado', { shouldValidate: true })}
           >
             <SelectTrigger>
-              <SelectValue placeholder="Seleccionar status" />
+              <SelectValue placeholder="Seleccionar estado" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="pendiente">Pendiente</SelectItem>
@@ -218,6 +218,7 @@ export function MantenimientoForm({
               type="number"
               min={0}
               step="0.01"
+              inputMode="decimal"
               placeholder="0.00"
               className="pl-7"
               {...register('costo_mano_obra', {
@@ -225,7 +226,11 @@ export function MantenimientoForm({
               })}
             />
           </div>
-          <p className="text-xs text-ran-slate">{formatMXN(costoManoObraSeguro)}</p>
+          {errors.costo_mano_obra ? (
+            <p className="text-xs text-destructive">{errors.costo_mano_obra.message}</p>
+          ) : (
+            <p className="text-xs text-ran-slate">{formatMXN(costoManoObraPreview)}</p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
@@ -238,6 +243,7 @@ export function MantenimientoForm({
                 type="number"
                 min={0}
                 step="0.01"
+                inputMode="decimal"
                 placeholder="0.00"
                 className="pl-7"
                 {...register('costo_mano_obra', {
@@ -245,7 +251,11 @@ export function MantenimientoForm({
                 })}
               />
             </div>
-            <p className="text-xs text-ran-slate">{formatMXN(costoManoObraSeguro)}</p>
+            {errors.costo_mano_obra ? (
+              <p className="text-xs text-destructive">{errors.costo_mano_obra.message}</p>
+            ) : (
+              <p className="text-xs text-ran-slate">{formatMXN(costoManoObraPreview)}</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="costo_refacciones">Refacciones (MXN)</Label>
@@ -254,10 +264,14 @@ export function MantenimientoForm({
               type="number"
               min={0}
               step="0.01"
+              inputMode="decimal"
               {...register('costo_refacciones', {
                 setValueAs: (value: string) => (value === '' ? 0 : Number(value)),
               })}
             />
+            {errors.costo_refacciones && (
+              <p className="text-xs text-destructive">{errors.costo_refacciones.message}</p>
+            )}
           </div>
         </div>
       )}

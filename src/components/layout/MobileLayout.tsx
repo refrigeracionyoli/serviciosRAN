@@ -87,6 +87,17 @@ export function MobileLayout() {
   }, {
     enabled: Boolean(user?.id) && warmupsEnabled && !isServiciosRoute,
   })
+  useServiciosQuery({
+    status: 'completado',
+    tecnicoId: user?.id ?? null,
+    clienteId: null,
+    fechaDesde: today,
+    fechaHasta: today,
+    tipoServicio: null,
+    search: null,
+  }, {
+    enabled: Boolean(user?.id) && warmupsEnabled && !isServiciosRoute,
+  })
   const { data: mantenimientos = [] } = useMantenimientosQuery()
 
   // Warmup offline para rutas críticas del técnico.
@@ -120,7 +131,7 @@ export function MobileLayout() {
                       Servicios RAN
                     </p>
                     <p className="truncate text-[15px] font-bold text-white">
-                      {perfil?.nombre ?? 'Tecnico'}
+                      {perfil?.nombre ?? 'Técnico'}
                     </p>
                   </div>
                 </div>

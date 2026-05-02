@@ -194,6 +194,36 @@ function buildInventarioQuantityMap(items: Array<Pick<RefaccionInput, 'inventari
   return quantities
 }
 
+function aggregateRefaccionesByInventario(
+  items: Array<RefaccionInput & { inventory_source?: ServicioRefaccionesInventorySource | null }>,
+): StoredRefaccionInput[] {
+  const byInventarioId = new Map<number, StoredRefaccionInput>()
+  const withoutInventarioId: StoredRefaccionInput[] = []
+
+  for (const item of items) {
+    if (!item.inventario_id) {
+      withoutInventarioId.push({ ...item })
+      continue
+    }
+
+    const existing = byInventarioId.get(item.inventario_id)
+    if (!existing) {
+      byInventarioId.set(item.inventario_id, { ...item })
+      continue
+    }
+
+    byInventarioId.set(item.inventario_id, {
+      ...existing,
+      nombre_refaccion: existing.nombre_refaccion || item.nombre_refaccion,
+      cantidad: Number(existing.cantidad) + Number(item.cantidad),
+      precio_unitario: existing.precio_unitario ?? item.precio_unitario,
+      inventory_source: normalizeInventorySource(existing.inventory_source ?? item.inventory_source),
+    })
+  }
+
+  return [...byInventarioId.values(), ...withoutInventarioId]
+}
+
 function isGeneralInventorySource(source?: ServicioRefaccionesInventorySource | null): boolean {
   return normalizeInventorySource(source) === 'general'
 }
@@ -359,7 +389,7 @@ async function applyLocalRefaccionesChange(
         inventario_id: item.inventario_id,
         tipo: 'correccion_instalacion',
         cantidad: item.cantidad,
-        motivo: `${context.refKey} Correccion de Instalacion a ${context.ubicacion}`,
+        motivo: `${context.refKey} Corrección de instalación a ${context.ubicacion}`,
         referencia_id: context.referenciaId,
         usuario_id: ownerId,
       }))
@@ -371,7 +401,7 @@ async function applyLocalRefaccionesChange(
         inventario_id: item.inventario_id,
         tipo: 'instalacion_refaccion',
         cantidad: item.cantidad,
-        motivo: `${context.refKey} Instalacion a ${context.ubicacion}`,
+        motivo: `${context.refKey} Instalación a ${context.ubicacion}`,
         referencia_id: context.referenciaId,
         usuario_id: ownerId,
       }))
@@ -1195,9 +1225,15 @@ export async function queueServicioReplaceRefaccionesCommand(
   options?: QueueServicioReplaceRefaccionesOptions,
 ): Promise<{ commandId: string }> {
   const inventorySource = normalizeInventorySource(options?.inventorySource)
+  const commandItems = inventorySource === 'tecnico'
+    ? aggregateRefaccionesByInventario(items).map((item) => ({
+      ...item,
+      inventory_source: 'tecnico' as const,
+    }))
+    : items
   const dependencies = await collectDependencies(ownerId, [
     { entityType: 'servicio', entityId: serviceId },
-    ...items.map((item) => ({ entityType: 'inventario', entityId: item.inventario_id })),
+    ...commandItems.map((item) => ({ entityType: 'inventario', entityId: item.inventario_id })),
     ...(inventorySource === 'tecnico' ? [{ entityType: 'profile', entityId: options?.tecnicoId }] : []),
   ])
 
@@ -1208,7 +1244,7 @@ export async function queueServicioReplaceRefaccionesCommand(
     entityId: serviceId,
     payload: {
       serviceId,
-      items,
+      items: commandItems,
       localMovementIds: [],
       inventorySource,
       tecnicoId: options?.tecnicoId ?? null,
@@ -1252,13 +1288,13 @@ export async function queueServicioReplaceRefaccionesCommand(
 
         return applyLocalTecnicoServiceRefaccionesChange(ownerId, {
           serviceId,
-          items,
+          items: commandItems,
           tecnicoId: options.tecnicoId,
           inventarioFecha: options.inventarioFecha,
         })
       }
 
-      return applyLocalRefaccionesChange(ownerId, { serviceId, items })
+      return applyLocalRefaccionesChange(ownerId, { serviceId, items: commandItems })
     },
   )
   const movementIds = localRefaccionesResult.movementIds
@@ -1273,7 +1309,7 @@ export async function queueServicioReplaceRefaccionesCommand(
 
   command.payload = {
     serviceId,
-    items,
+    items: commandItems,
     localMovementIds: movementIds,
     inventorySource,
     tecnicoId: options?.tecnicoId ?? null,
@@ -1675,12 +1711,18 @@ export async function syncServicioReplaceRefacciones(ownerId: string, payload: S
   await assertCurrentUserCanWriteRemoteService(remoteServiceId)
 
   const inventorySource = normalizeInventorySource(payload.inventorySource)
-  const items = await Promise.all(
+  const resolvedItems = await Promise.all(
     payload.items.map(async (item) => ({
       ...item,
       inventario_id: await resolveLinkedNumberId(ownerId, 'inventario', item.inventario_id ?? null),
     })),
   )
+  const items = inventorySource === 'tecnico'
+    ? aggregateRefaccionesByInventario(resolvedItems).map((item) => ({
+      ...item,
+      inventory_source: 'tecnico' as const,
+    }))
+    : resolvedItems
   const currentUserId = ownerId
 
   if (inventorySource === 'tecnico') {
@@ -1691,88 +1733,62 @@ export async function syncServicioReplaceRefacciones(ownerId: string, payload: S
       throw new Error('No se pudo resolver el técnico remoto para asignar refacciones.')
     }
 
-    const { data: existingRows, error: existingError } = await supabase.from('servicio_refacciones')
-      .select('inventario_id, cantidad')
-      .eq('servicio_id', remoteServiceId)
-      .eq('inventory_source', 'tecnico')
+    const rpcItems = items.map((item) => ({
+      inventario_id: item.inventario_id,
+      nombre_refaccion: item.nombre_refaccion,
+      cantidad: item.cantidad,
+      precio_unitario: item.precio_unitario,
+    }))
+    const { data: refaccionesRows, error: rpcError } = await supabase.rpc('replace_servicio_refacciones_tecnico', {
+      p_servicio_id: remoteServiceId,
+      p_tecnico_id: remoteTecnicoId,
+      p_fecha: inventarioFecha,
+      p_items: rpcItems,
+    })
 
-    if (existingError) throw existingError
+    if (rpcError) throw rpcError
 
-    const previousByInventarioId = buildInventarioQuantityMap((existingRows ?? []).map((row: {
-      inventario_id: number | null
-      cantidad: number
-    }) => ({
-      inventario_id: row.inventario_id,
-      cantidad: row.cantidad,
-    })))
-    const nextByInventarioId = buildInventarioQuantityMap(items)
+    const previousRollbackItems = await Promise.all(
+      (payload.rollback?.previousItems ?? []).map(async (item) => ({
+        ...item,
+        inventario_id: await resolveLinkedNumberId(ownerId, 'inventario', item.inventario_id ?? null),
+      })),
+    )
     const affectedIds = Array.from(new Set([
-      ...previousByInventarioId.keys(),
-      ...nextByInventarioId.keys(),
+      ...items.map((item) => item.inventario_id).filter((id): id is number => typeof id === 'number'),
+      ...previousRollbackItems.map((item) => item.inventario_id).filter((id): id is number => typeof id === 'number'),
     ]))
 
     if (affectedIds.length > 0) {
       const { data: inventarioTecnicoRows, error: inventarioTecnicoError } = await supabase
         .from('inventario_tecnico')
-        .select('id, inventario_id, cantidad, cantidad_asignada_total, devuelto_at, devuelto_automaticamente')
+        .select('*, tecnico:profiles(id, nombre, correo), item:inventario(*)')
         .eq('tecnico_id', remoteTecnicoId)
         .eq('fecha', inventarioFecha)
-        .is('devuelto_at', null)
         .in('inventario_id', affectedIds)
 
       if (inventarioTecnicoError) throw inventarioTecnicoError
-
-      const inventarioTecnicoById = new Map(
-        ((inventarioTecnicoRows ?? []) as Array<Pick<InventarioTecnico, 'id' | 'inventario_id' | 'cantidad' | 'cantidad_asignada_total' | 'devuelto_at' | 'devuelto_automaticamente'>>)
-          .map((row) => [row.inventario_id, row] as const),
-      )
-
-      for (const inventarioId of affectedIds) {
-        const currentRow = inventarioTecnicoById.get(inventarioId) ?? null
-        const currentCantidad = currentRow?.cantidad ?? 0
-        const previousCantidad = previousByInventarioId.get(inventarioId) ?? 0
-        const nextCantidadAsignada = nextByInventarioId.get(inventarioId) ?? 0
-        const nextCantidadDisponible = currentCantidad + previousCantidad - nextCantidadAsignada
-
-        if (nextCantidadDisponible < 0) {
-          throw new Error(`Inventario técnico insuficiente para sincronizar la refacción ${inventarioId}.`)
-        }
-
-        if (!currentRow && nextCantidadDisponible === 0) {
-          continue
-        }
-
-        const currentAssignedTotal = currentRow
-          ? getInventarioTecnicoAssignedTotal(normalizeInventarioTecnicoRow(currentRow))
-          : nextCantidadDisponible
-
-        const payload = {
-          tecnico_id: remoteTecnicoId,
-          inventario_id: inventarioId,
-          cantidad: nextCantidadDisponible,
-          cantidad_asignada_total: currentAssignedTotal,
-          fecha: inventarioFecha,
-          devuelto_at: null,
-          devuelto_automaticamente: false,
-        }
-
-        if (currentRow) {
-          const { error: updateInventarioTecnicoError } = await supabase
-            .from('inventario_tecnico')
-            .update(payload)
-            .eq('id', currentRow.id)
-
-          if (updateInventarioTecnicoError) throw updateInventarioTecnicoError
-        } else {
-          const { error: upsertInventarioTecnicoError } = await supabase
-            .from('inventario_tecnico')
-            .upsert(payload, { onConflict: 'tecnico_id,inventario_id,fecha' })
-
-          if (upsertInventarioTecnicoError) throw upsertInventarioTecnicoError
-        }
-      }
+      await upsertCachedInventarioTecnico(ownerId, (inventarioTecnicoRows ?? []) as InventarioTecnico[])
     }
-  } else {
+
+    const syncedRefacciones = (refaccionesRows ?? []) as ServicioRefaccion[]
+    await upsertCachedServicioRefacciones(ownerId, {
+      serviceId: payload.serviceId,
+      items: syncedRefacciones.map(toStoredRefaccionInput),
+    })
+
+    const { data: updatedService, error: updatedServiceError } = await supabase
+      .from('servicios')
+      .select(SELECT_SERVICIO)
+      .eq('id', remoteServiceId)
+      .single()
+
+    if (updatedServiceError) throw updatedServiceError
+    await upsertCachedServicio(ownerId, updatedService as Servicio)
+
+    return remoteServiceId
+  }
+
     const [cachedServicio, existingRowsResult] = await Promise.all([
       getCachedServicioDetalleSnapshot(ownerId, payload.serviceId),
       supabase.from('servicio_refacciones')
@@ -1962,7 +1978,7 @@ export async function syncServicioReplaceRefacciones(ownerId: string, payload: S
           inventario_id: item.inventario_id!,
           tipo: 'correccion_instalacion' as const,
           cantidad: Number(item.cantidad),
-          motivo: `${context.refKey} Correccion de Instalacion a ${context.ubicacion}`,
+          motivo: `${context.refKey} Corrección de instalación a ${context.ubicacion}`,
           referencia_id: remoteServiceId,
           usuario_id: currentUserId,
         })),
@@ -1972,7 +1988,7 @@ export async function syncServicioReplaceRefacciones(ownerId: string, payload: S
           inventario_id: item.inventario_id!,
           tipo: 'instalacion_refaccion' as const,
           cantidad: Number(item.cantidad),
-          motivo: `${context.refKey} Instalacion a ${context.ubicacion}`,
+          motivo: `${context.refKey} Instalación a ${context.ubicacion}`,
           referencia_id: remoteServiceId,
           usuario_id: currentUserId,
         })),
@@ -2167,71 +2183,6 @@ export async function syncServicioReplaceRefacciones(ownerId: string, payload: S
     }
 
     return remoteServiceId
-  }
-
-  let deleteQuery = supabase.from('servicio_refacciones')
-    .delete()
-    .eq('servicio_id', remoteServiceId)
-
-  if (inventorySource === 'tecnico') {
-    deleteQuery = deleteQuery.eq('inventory_source', 'tecnico')
-  }
-
-  const { error: deleteError } = await deleteQuery
-  if (deleteError) throw deleteError
-
-  if (items.length > 0) {
-    const { error: insertError } = await supabase.from('servicio_refacciones')
-      .insert(
-        items.map((item) => ({
-          servicio_id: remoteServiceId,
-          inventario_id: item.inventario_id ?? null,
-          nombre_refaccion: item.nombre_refaccion,
-          cantidad: item.cantidad,
-          precio_unitario: item.precio_unitario,
-          inventory_source: inventorySource,
-        })),
-      )
-    if (insertError) throw insertError
-  }
-
-  const { data: totalRows, error: totalRowsError } = await supabase.from('servicio_refacciones')
-    .select('cantidad, precio_unitario')
-    .eq('servicio_id', remoteServiceId)
-
-  if (totalRowsError) throw totalRowsError
-
-  const totalRefacciones = calculateRefaccionesTotal(
-    ((totalRows ?? []) as Array<Pick<RefaccionInput, 'cantidad' | 'precio_unitario'>>).map((row) => ({
-      inventario_id: null,
-      nombre_refaccion: '',
-      cantidad: row.cantidad,
-      precio_unitario: row.precio_unitario,
-    })),
-  )
-
-  const { error: serviceError } = await supabase.from('servicios')
-    .update({ costo_refacciones: totalRefacciones })
-    .eq('id', remoteServiceId)
-  if (serviceError) throw serviceError
-
-  await upsertCachedServicioRefacciones(ownerId, {
-    serviceId: payload.serviceId,
-    items: payload.items,
-    replaceSource: 'tecnico',
-  })
-
-  const servicio = await getCachedServicioDetalleSnapshot(ownerId, payload.serviceId)
-  if (servicio) {
-    await upsertCachedServicio(ownerId, {
-      ...servicio,
-      costo_refacciones: totalRefacciones,
-      total: Number(servicio.costo_mano_obra ?? 0) + totalRefacciones,
-      updated_at: getNowIso(),
-    })
-  }
-
-  return remoteServiceId
 }
 
 export async function syncServicioClose(ownerId: string, payload: ServicioClosePayload) {

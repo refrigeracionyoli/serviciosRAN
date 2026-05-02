@@ -71,7 +71,7 @@ export function AsignarMantenimientoPage() {
 
     if (refaccionInvalida) {
       toast({
-        title: 'Refaccion invalida',
+        title: 'Refacción inválida',
         description: 'Revisa nombre, cantidad y precio unitario en las refacciones capturadas.',
         variant: 'destructive',
       })
@@ -109,8 +109,8 @@ export function AsignarMantenimientoPage() {
         title: 'Mantenimiento asignado',
         description:
           refaccionesConCaptura.length > 0
-            ? `Se guardo con ${refaccionesConCaptura.length} refacciones por ${formatMXN(totalRefaccionesCapturadas)}.`
-            : 'Se guardo sin refacciones.',
+            ? `Se guardó con ${refaccionesConCaptura.length} refacciones por ${formatMXN(totalRefaccionesCapturadas)}.`
+            : 'Se guardó sin refacciones.',
       })
 
       navigate('/polizas/mantenimientos', { replace: true })
@@ -168,7 +168,7 @@ export function AsignarMantenimientoPage() {
               initialPolizaId={initialPolizaId}
               requireTecnico
               hideCostoRefaccionesField
-              submitLabel="Guardar asignacion"
+              submitLabel="Guardar asignación"
             />
           </CardContent>
         </Card>
@@ -180,7 +180,7 @@ export function AsignarMantenimientoPage() {
             </CardHeader>
             <CardContent>
               <p className="mb-3 text-sm text-ran-slate">
-                Captura piezas usadas por item. El sistema calcula el total automaticamente.
+                Captura piezas usadas por ítem. El sistema calcula el total automáticamente.
               </p>
               <RefaccionesForm
                 onSubmit={() => undefined}
@@ -198,16 +198,16 @@ export function AsignarMantenimientoPage() {
             <CardContent className="space-y-2 text-sm text-ran-slate">
               <p>
                 <span className="font-semibold text-ran-navy">Sucursal:</span>{' '}
-                {selectedPoliza?.cliente?.nombre ?? 'Selecciona una poliza en el formulario'}
+                {selectedPoliza?.cliente?.nombre ?? 'Selecciona una póliza en el formulario'}
               </p>
               <p>
-                <span className="font-semibold text-ran-navy">Maquina:</span>{' '}
+                <span className="font-semibold text-ran-navy">Máquina:</span>{' '}
                 {selectedPoliza?.maquina?.serie
                   ? `${selectedPoliza.maquina.serie} - ${selectedPoliza.maquina.modelo}`
-                  : 'Se definira al seleccionar poliza'}
+                  : 'Se definirá al seleccionar póliza'}
               </p>
               <p>
-                <span className="font-semibold text-ran-navy">Inicio de poliza:</span>{' '}
+                <span className="font-semibold text-ran-navy">Inicio de póliza:</span>{' '}
                 {selectedPoliza ? formatDate(selectedPoliza.fecha_inicio) : '—'}
               </p>
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">

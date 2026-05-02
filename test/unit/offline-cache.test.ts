@@ -21,6 +21,7 @@ import {
   isLocalNumberId,
   parseLocalAttachmentId,
   replaceCachedEvidenciasForServicio,
+  replaceCachedServiciosListSnapshot,
   toLocalAttachmentKey,
   upsertCachedClientes,
   upsertCachedEvidencias,
@@ -34,6 +35,7 @@ import {
   upsertCachedServicios,
   upsertEntityLink,
 } from '@/lib/offline/cache'
+import { offlineDb } from '@/lib/offline/db'
 import {
   OWNER_ID,
   TECNICO_ID,
@@ -163,6 +165,38 @@ describe('offline cache', () => {
       expect.objectContaining({ nombre_refaccion: 'Filtro', inventory_source: 'tecnico' }),
     ])
     expect(await getCachedEvidenciasByServicio(OWNER_ID, 30)).toHaveLength(2)
+  })
+
+  it('reconciles filtered service snapshots without deleting pending local changes', async () => {
+    const filtros = {
+      status: 'completado' as const,
+      tecnicoId: TECNICO_ID,
+      clienteId: null,
+      fechaDesde: '2026-04-26',
+      fechaHasta: '2026-04-26',
+      tipoServicio: null,
+      search: null,
+    }
+
+    await upsertCachedServicios(OWNER_ID, [
+      buildServicio({ id: 30, status: 'completado', fecha_servicio: '2026-04-26', tecnico_id: TECNICO_ID }),
+      buildServicio({ id: 31, status: 'completado', fecha_servicio: '2026-04-26', tecnico_id: TECNICO_ID }),
+      buildServicio({ id: 32, status: 'en_ruta', fecha_servicio: '2026-04-26', tecnico_id: TECNICO_ID }),
+    ])
+    await offlineDb.servicios.update(buildCacheKey(OWNER_ID, 31), {
+      pendingSync: true,
+      pendingCommandId: 'cmd-local',
+      offlineUpdatedAt: '2026-04-26T12:00:00.000Z',
+    })
+
+    await replaceCachedServiciosListSnapshot(OWNER_ID, [
+      buildServicio({ id: 33, status: 'completado', fecha_servicio: '2026-04-26', tecnico_id: TECNICO_ID }),
+    ], filtros)
+
+    const completados = await getCachedServiciosSnapshot(OWNER_ID, filtros)
+    expect(completados.map((servicio) => servicio.id).sort()).toEqual([31, 33])
+    expect(await getCachedServicioDetalleSnapshot(OWNER_ID, 30)).toBeNull()
+    expect(await getCachedServicioDetalleSnapshot(OWNER_ID, 32)).toMatchObject({ id: 32, status: 'en_ruta' })
   })
 
   it('tracks pending local evidence attachments and local URL keys', async () => {

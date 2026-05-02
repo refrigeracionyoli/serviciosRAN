@@ -28,11 +28,11 @@ const tipoConfig: Record<MovimientoTipo, { label: string; className: string }> =
   entrada: { label: 'Entrada manual', className: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
   salida: { label: 'Salida manual', className: 'bg-rose-50 text-rose-800 border-rose-200' },
   ajuste: { label: 'Ajuste', className: 'bg-sky-50 text-sky-800 border-sky-200' },
-  alta_inventario: { label: 'Alta inventario', className: 'bg-green-50 text-green-800 border-green-200' },
-  asignacion_tecnico: { label: 'Asignacion tecnico', className: 'bg-amber-50 text-amber-800 border-amber-200' },
-  devolucion_tecnico: { label: 'Devolucion tecnico', className: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
-  instalacion_refaccion: { label: 'Instalacion', className: 'bg-violet-50 text-violet-800 border-violet-200' },
-  correccion_instalacion: { label: 'Correccion de Instalacion', className: 'bg-slate-100 text-slate-800 border-slate-300' },
+  alta_inventario: { label: 'Alta de inventario', className: 'bg-green-50 text-green-800 border-green-200' },
+  asignacion_tecnico: { label: 'Asignación a técnico', className: 'bg-amber-50 text-amber-800 border-amber-200' },
+  devolucion_tecnico: { label: 'Devolución de técnico', className: 'bg-cyan-50 text-cyan-800 border-cyan-200' },
+  instalacion_refaccion: { label: 'Instalación', className: 'bg-violet-50 text-violet-800 border-violet-200' },
+  correccion_instalacion: { label: 'Corrección de instalación', className: 'bg-slate-100 text-slate-800 border-slate-300' },
 }
 
 const tipoOptions = Object.entries(tipoConfig) as Array<[MovimientoTipo, { label: string; className: string }]>
@@ -58,8 +58,26 @@ function parseMovimientoReference(motivo: string | null): ParsedReference | null
   }
 }
 
+function normalizeSearchText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+}
+
+function formatMovimientoText(value: string): string {
+  return value
+    .replace(/Correccion de Instalacion/gi, 'Corrección de instalación')
+    .replace(/Reversion de instalacion/gi, 'Corrección de instalación')
+    .replace(/Instalacion a/gi, 'Instalación a')
+    .replace(/Movimiento a inventario de tecnico/gi, 'Movimiento a inventario de técnico')
+    .replace(/Devolucion automatica de inventario de tecnico/gi, 'Devolución automática de inventario de técnico')
+    .replace(/Devolucion de inventario de tecnico/gi, 'Devolución de inventario de técnico')
+    .replace(/Eliminacion de inventario de tecnico/gi, 'Eliminación de inventario de técnico')
+}
+
 function getMovimientoDisplayTipo(row: MovimientoInventario): MovimientoTipo {
-  const motivo = row.motivo?.toLowerCase() ?? ''
+  const motivo = normalizeSearchText(row.motivo ?? '')
   const rawTipo = row.tipo as string
 
   if (rawTipo === 'reversion_instalacion') return 'correccion_instalacion'
@@ -126,7 +144,7 @@ export function MovimientosPage() {
   }, [itemFilter, itemParam, searchParams, setSearchParams])
 
   const filteredRows = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase()
+    const normalizedSearch = normalizeSearchText(search.trim())
 
     return data.filter((row) => {
       const displayTipo = getMovimientoDisplayTipo(row)
@@ -139,7 +157,7 @@ export function MovimientosPage() {
         row.usuario?.nombre ?? '',
         row.motivo ?? '',
         tipoConfig[displayTipo].label,
-      ].some((value) => value.toLowerCase().includes(normalizedSearch))
+      ].some((value) => normalizeSearchText(value).includes(normalizedSearch))
     })
   }, [data, search, tipoFilter])
 
@@ -211,7 +229,8 @@ export function MovimientosPage() {
         accessorKey: 'motivo',
         cell: ({ row }) => {
           const parsed = parseMovimientoReference(row.original.motivo)
-          return parsed?.detail ?? row.original.motivo ?? '—'
+          const detail = parsed?.detail ?? row.original.motivo
+          return detail ? formatMovimientoText(detail) : '—'
         },
       },
       {
@@ -231,7 +250,7 @@ export function MovimientosPage() {
     <div className="p-5 lg:p-7">
       <PageHeader
         title="Movimientos de inventario"
-        description="Historial de movimientos manuales, tecnicos e instalaciones"
+        description="Historial de movimientos manuales, técnicos e instalaciones"
         className="mb-4 px-0 pt-0 lg:px-0 lg:pt-0"
       />
 
@@ -254,7 +273,7 @@ export function MovimientosPage() {
               <p className="mt-1 text-2xl font-bold text-violet-950">{stats.instalaciones}</p>
             </div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Inventario tecnico</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Inventario técnico</p>
               <p className="mt-1 text-2xl font-bold text-amber-950">{stats.tecnico}</p>
             </div>
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
@@ -271,9 +290,20 @@ export function MovimientosPage() {
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ran-slate" />
               <Input
+                id="inventario-movimientos-busqueda"
+                name="inventario_movimientos_busqueda"
+                type="search"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                data-form-type="other"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                aria-label="Buscar movimientos de inventario"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar por item, usuario o motivo..."
+                placeholder="Buscar por refacción, responsable o motivo..."
                 className="h-11 rounded-xl border-slate-200 pl-10"
               />
             </div>
@@ -295,7 +325,7 @@ export function MovimientosPage() {
                 <SelectValue placeholder="Item" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos los items</SelectItem>
+                <SelectItem value="all">Todas las refacciones</SelectItem>
                 {inventario.map((item) => (
                   <SelectItem key={item.id} value={String(item.id)}>{item.nombre}</SelectItem>
                 ))}
@@ -306,7 +336,7 @@ export function MovimientosPage() {
       )}
 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-ran-slate">
-        Los movimientos se generan automaticamente desde: alta de inventario, ajustes manuales, asignacion o devolucion de tecnico, instalacion y correccion de refacciones.
+        Los movimientos se generan automáticamente desde altas de inventario, ajustes manuales, asignación o devolución de técnico, instalación y corrección de refacciones.
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

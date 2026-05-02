@@ -18,6 +18,7 @@ import { useClientesQuery, useCrearClienteMutation } from '@/hooks/use-clientes'
 import { useToast } from '@/hooks/use-toast'
 import { ClienteCombobox } from './ClienteCombobox'
 import { DatePickerInput } from '@/components/shared/DatePickerInput'
+import { getSpanishErrorMessage } from '@/lib/error-messages'
 import {
   Dialog,
   DialogContent,
@@ -166,7 +167,7 @@ export function PolizaForm({
         description: `${created.nombre} fue agregado al catálogo.`,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo crear el cliente.'
+      const message = getSpanishErrorMessage(error, 'No se pudo crear el cliente.')
       toast({
         title: 'Error al crear cliente',
         description: message,
@@ -214,7 +215,7 @@ export function PolizaForm({
         description: `Serie ${created.serie} registrada para ${selectedCliente?.nombre ?? 'el cliente seleccionado'}.`,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudo crear la máquina.'
+      const message = getSpanishErrorMessage(error, 'No se pudo crear la máquina.')
       toast({
         title: 'Error al crear máquina',
         description: message,

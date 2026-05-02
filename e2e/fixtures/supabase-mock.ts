@@ -158,6 +158,77 @@ const servicio = {
   tecnico: tecnicoProfile,
 }
 
+const clientePendienteHoy = {
+  ...cliente,
+  id: 2,
+  nombre: 'Cliente Pendiente Hoy',
+}
+
+const clienteEnRutaOtroDia = {
+  ...cliente,
+  id: 3,
+  nombre: 'Cliente En Ruta Otro Día',
+}
+
+const clienteCompletadoHoy = {
+  ...cliente,
+  id: 4,
+  nombre: 'Cliente Completado Hoy',
+}
+
+const clienteCompletadoOtroDia = {
+  ...cliente,
+  id: 5,
+  nombre: 'Cliente Completado Otro Día',
+}
+
+const servicioPendienteHoy = {
+  ...servicio,
+  id: 2,
+  orden: 1002,
+  aviso: 2002,
+  cliente_id: clientePendienteHoy.id,
+  descripcion: 'Servicio pendiente que no debe mostrarse en ruta',
+  status: 'pendiente',
+  cliente: clientePendienteHoy,
+}
+
+const servicioEnRutaOtroDia = {
+  ...servicio,
+  id: 3,
+  orden: 1003,
+  aviso: 2003,
+  cliente_id: clienteEnRutaOtroDia.id,
+  descripcion: 'Servicio en ruta de otro día que no debe mostrarse hoy',
+  fecha_servicio: '2026-04-27',
+  cliente: clienteEnRutaOtroDia,
+}
+
+const servicioCompletadoHoy = {
+  ...servicio,
+  id: 4,
+  orden: 1004,
+  aviso: 2004,
+  cliente_id: clienteCompletadoHoy.id,
+  descripcion: 'Servicio completado visible hoy',
+  status: 'completado',
+  fecha_cierre: NOW,
+  cliente: clienteCompletadoHoy,
+}
+
+const servicioCompletadoOtroDia = {
+  ...servicio,
+  id: 5,
+  orden: 1005,
+  aviso: 2005,
+  cliente_id: clienteCompletadoOtroDia.id,
+  descripcion: 'Servicio completado de otro día que no debe mostrarse hoy',
+  status: 'completado',
+  fecha_servicio: '2026-04-25',
+  fecha_cierre: '2026-04-25T12:00:00.000Z',
+  cliente: clienteCompletadoOtroDia,
+}
+
 const cierre = {
   id: 1,
   servicio_id: servicio.id,
@@ -331,9 +402,21 @@ const catalogoPep = {
 
 const tableRows: Record<string, Array<Record<string, unknown>>> = {
   profiles: [adminProfile, tecnicoProfile],
-  clientes: [cliente],
+  clientes: [
+    cliente,
+    clientePendienteHoy,
+    clienteEnRutaOtroDia,
+    clienteCompletadoHoy,
+    clienteCompletadoOtroDia,
+  ],
   maquinas: [maquina],
-  servicios: [servicio],
+  servicios: [
+    servicio,
+    servicioPendienteHoy,
+    servicioEnRutaOtroDia,
+    servicioCompletadoHoy,
+    servicioCompletadoOtroDia,
+  ],
   cierres: [cierre],
   evidencias: [evidencia],
   inventario: [inventarioItem],

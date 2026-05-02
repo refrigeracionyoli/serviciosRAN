@@ -60,6 +60,8 @@ describe('database and edge-function contracts', () => {
     expect(allMigrations).toContain('sync_inventario_from_servicio_refacciones')
     expect(allMigrations).toContain('instalacion_refaccion')
     expect(allMigrations).toContain('correccion_instalacion')
+    expect(allMigrations).toContain('replace_servicio_refacciones_tecnico')
+    expect(allMigrations).toContain('servicio_refacciones_tecnico_unique')
   })
 
   it('keeps installation and retiro machine lifecycle attached to service completion boundary', () => {

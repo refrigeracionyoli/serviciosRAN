@@ -1402,6 +1402,58 @@ export async function upsertCachedServicio(ownerId: string, servicio: Servicio) 
   await upsertCachedServicios(ownerId, [servicio])
 }
 
+function cachedServicioMatchesFilters(row: Servicio, filtros?: FiltrosServicio): boolean {
+  if (filtros?.status && row.status !== filtros.status) return false
+  if (filtros?.tecnicoId && row.tecnico_id !== filtros.tecnicoId) return false
+  if (filtros?.clienteId && row.cliente_id !== filtros.clienteId) return false
+  if (filtros?.fechaDesde && (!row.fecha_servicio || row.fecha_servicio < filtros.fechaDesde)) return false
+  if (filtros?.fechaHasta && (!row.fecha_servicio || row.fecha_servicio > filtros.fechaHasta)) return false
+  if (filtros?.tipoServicio && row.tipo_servicio !== filtros.tipoServicio) return false
+
+  if (filtros?.search?.trim()) {
+    const needle = filtros.search.trim().toLowerCase()
+    const values = [
+      row.orden?.toString() ?? '',
+      row.aviso?.toString() ?? '',
+      row.tipo_servicio,
+      row.descripcion,
+      row.cliente?.nombre,
+      row.cliente?.codigo_cliente,
+      row.maquina?.modelo,
+      row.maquina?.serie,
+      row.tecnico?.nombre,
+    ]
+
+    if (!values.some((value) => value?.toLowerCase().includes(needle))) {
+      return false
+    }
+  }
+
+  return true
+}
+
+export async function replaceCachedServiciosListSnapshot(
+  ownerId: string,
+  servicios: Servicio[],
+  filtros?: FiltrosServicio,
+) {
+  const remoteIds = new Set(servicios.map((servicio) => servicio.id))
+  if (servicios.length > 0) {
+    await upsertCachedServicios(ownerId, servicios)
+  }
+
+  const rows = await offlineDb.servicios.where('ownerId').equals(ownerId).toArray()
+  const staleKeys = rows
+    .filter((row) => !row.pendingSync)
+    .filter((row) => cachedServicioMatchesFilters(row, filtros))
+    .filter((row) => !remoteIds.has(row.id))
+    .map((row) => row.cacheKey)
+
+  if (staleKeys.length > 0) {
+    await offlineDb.servicios.bulkDelete(staleKeys)
+  }
+}
+
 export async function getCachedServiciosSnapshot(ownerId: string, filtros?: FiltrosServicio): Promise<Servicio[]> {
   const clientesById = await getClientesLookup(ownerId)
   const maquinasById = await getMaquinasLookup(ownerId, clientesById)
@@ -1413,33 +1465,7 @@ export async function getCachedServiciosSnapshot(ownerId: string, filtros?: Filt
   return filterResolvedDuplicates(rows, lookup)
     .map((row) => hydrateServicioFromLookup(row, row.id, serviciosById, maquinasById, clientesById, profilesById))
     .filter((row): row is Servicio => Boolean(row))
-    .filter((row) => {
-      if (filtros?.status && row.status !== filtros.status) return false
-      if (filtros?.tecnicoId && row.tecnico_id !== filtros.tecnicoId) return false
-      if (filtros?.clienteId && row.cliente_id !== filtros.clienteId) return false
-      if (filtros?.fechaDesde && (!row.fecha_servicio || row.fecha_servicio < filtros.fechaDesde)) return false
-      if (filtros?.fechaHasta && (!row.fecha_servicio || row.fecha_servicio > filtros.fechaHasta)) return false
-      if (filtros?.tipoServicio && row.tipo_servicio !== filtros.tipoServicio) return false
-
-      if (filtros?.search?.trim()) {
-        const needle = filtros.search.trim().toLowerCase()
-        const values = [
-          row.tipo_servicio,
-          row.descripcion,
-          row.cliente?.nombre,
-          row.cliente?.codigo_cliente,
-          row.maquina?.modelo,
-          row.maquina?.serie,
-          row.tecnico?.nombre,
-        ]
-
-        if (!values.some((value) => value?.toLowerCase().includes(needle))) {
-          return false
-        }
-      }
-
-      return true
-    })
+    .filter((row) => cachedServicioMatchesFilters(row, filtros))
     .sort((left, right) => right.created_at.localeCompare(left.created_at))
 }
 

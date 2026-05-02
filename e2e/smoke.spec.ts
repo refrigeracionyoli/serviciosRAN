@@ -137,6 +137,21 @@ test.describe('tecnico smoke screens', () => {
     })
   }
 
+  test('tecnico home only renders today en ruta services and today completed services', async ({ page }) => {
+    const errors = startErrorCapture(page)
+    await page.clock.setFixedTime(new Date('2026-04-26T12:00:00-06:00'))
+    await installSupabaseMock(page, { role: 'tecnico' })
+
+    await page.goto('/tecnico')
+    await expect(page.getByRole('heading', { name: 'En ruta' })).toBeVisible()
+    await expect(page.getByText('Cliente Demo').first()).toBeVisible()
+    await expect(page.getByText('Cliente Completado Hoy')).toBeVisible()
+    await expect(page.getByText('Cliente Pendiente Hoy')).toHaveCount(0)
+    await expect(page.getByText('Cliente En Ruta Otro Día')).toHaveCount(0)
+    await expect(page.getByText('Cliente Completado Otro Día')).toHaveCount(0)
+    expect(errors).toEqual([])
+  })
+
   test('redirects tecnico away from admin shell', async ({ page }) => {
     const errors = startErrorCapture(page)
     await installSupabaseMock(page, { role: 'tecnico' })
