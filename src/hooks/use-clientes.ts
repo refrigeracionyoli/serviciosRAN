@@ -10,6 +10,7 @@ import {
 import { isBrowserOnline, isLikelyNetworkError, isLikelyUniqueViolation } from '@/lib/offline/network'
 import { withOfflineFallback } from '@/lib/offline/query-fallback'
 import { getCurrentSessionUserId } from '@/lib/offline/session'
+import { fetchPaginatedRows } from '@/lib/supabase-pagination'
 import {
   getCachedClientesSnapshot,
   getCachedServiciosSnapshot,
@@ -103,18 +104,20 @@ export function useClientesQuery(options?: ClientesQueryOptions) {
 
       return withOfflineFallback({
         remote: async () => {
-          let query = supabase
-            .from('clientes')
-            .select('*')
-            .order('nombre')
+          const clientes = await fetchPaginatedRows<Cliente>((from, to) => {
+            let query = supabase
+              .from('clientes')
+              .select('*')
+              .order('nombre')
 
-          if (!includeInactive) {
-            query = query.eq('activo', true)
-          }
+            if (!includeInactive) {
+              query = query.eq('activo', true)
+            }
 
-          const { data, error } = await query
-          if (error) throw error
-          return data as Cliente[]
+            return query.range(from, to)
+          })
+
+          return clientes
         },
         local: () => getCachedClientesSnapshot(ownerId, includeInactive),
         onRemoteSuccess: (clientes) => upsertCachedClientes(ownerId, clientes),

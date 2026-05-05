@@ -10,6 +10,7 @@ import {
 import { isBrowserOnline, isLikelyNetworkError, isLikelyUniqueViolation } from '@/lib/offline/network'
 import { withOfflineFallback } from '@/lib/offline/query-fallback'
 import { getCurrentSessionUserId } from '@/lib/offline/session'
+import { fetchPaginatedRows } from '@/lib/supabase-pagination'
 import { getCachedMaquinasSnapshot, isLocalNumberId, upsertCachedMaquinas } from '@/lib/offline/cache'
 import type { Maquina } from '@/types/domain.types'
 import type { CrearMaquinaInput, EditarMaquinaInput } from '@/schemas/cliente.schema'
@@ -49,17 +50,19 @@ export function useMaquinasQuery(clienteIdOrOptions?: number | MaquinasQueryOpti
 
       return withOfflineFallback({
         remote: async () => {
-          let query = supabase
-            .from('maquinas')
-            .select('*, cliente:clientes(id, nombre, codigo_cliente, direccion, municipio, telefono)')
-            .order('serie')
+          const maquinas = await fetchPaginatedRows<Maquina>((from, to) => {
+            let query = supabase
+              .from('maquinas')
+              .select('*, cliente:clientes(id, nombre, codigo_cliente, direccion, municipio, telefono)')
+              .order('serie')
 
-          if (clienteId) query = query.eq('cliente_id', clienteId)
-          if (!includeInactive) query = query.eq('activo', true)
+            if (clienteId) query = query.eq('cliente_id', clienteId)
+            if (!includeInactive) query = query.eq('activo', true)
 
-          const { data, error } = await query
-          if (error) throw error
-          return data as Maquina[]
+            return query.range(from, to)
+          })
+
+          return maquinas
         },
         local: () => getCachedMaquinasSnapshot(ownerId, { clienteId, includeInactive }),
         onRemoteSuccess: (maquinas) => upsertCachedMaquinas(ownerId, maquinas),

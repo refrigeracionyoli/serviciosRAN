@@ -17,6 +17,7 @@ import {
 import { withOfflineFallback } from '@/lib/offline/query-fallback'
 import { isBrowserOnline, isLikelyNetworkError, isLikelyUniqueViolation } from '@/lib/offline/network'
 import { getCurrentSessionUserId } from '@/lib/offline/session'
+import { fetchPaginatedRows } from '@/lib/supabase-pagination'
 import {
   getCachedEvidenciasByServicio,
   getCachedServicioDetalleSnapshot,
@@ -244,18 +245,20 @@ export function useServiciosQuery(filtros?: FiltrosServicio, options?: Servicios
 
       return withOfflineFallback({
         remote: async () => {
-          let query = supabase.from('servicios').select(SELECT_SERVICIO).order('created_at', { ascending: false })
+          const servicios = await fetchPaginatedRows<Servicio>((from, to) => {
+            let query = supabase.from('servicios').select(SELECT_SERVICIO).order('created_at', { ascending: false })
 
-          if (normalizedFilters?.status) query = query.eq('status', normalizedFilters.status)
-          if (normalizedFilters?.tecnicoId) query = query.eq('tecnico_id', normalizedFilters.tecnicoId)
-          if (normalizedFilters?.clienteId) query = query.eq('cliente_id', normalizedFilters.clienteId)
-          if (normalizedFilters?.fechaDesde) query = query.gte('fecha_servicio', normalizedFilters.fechaDesde)
-          if (normalizedFilters?.fechaHasta) query = query.lte('fecha_servicio', normalizedFilters.fechaHasta)
-          if (normalizedFilters?.tipoServicio) query = query.eq('tipo_servicio', normalizedFilters.tipoServicio)
+            if (normalizedFilters?.status) query = query.eq('status', normalizedFilters.status)
+            if (normalizedFilters?.tecnicoId) query = query.eq('tecnico_id', normalizedFilters.tecnicoId)
+            if (normalizedFilters?.clienteId) query = query.eq('cliente_id', normalizedFilters.clienteId)
+            if (normalizedFilters?.fechaDesde) query = query.gte('fecha_servicio', normalizedFilters.fechaDesde)
+            if (normalizedFilters?.fechaHasta) query = query.lte('fecha_servicio', normalizedFilters.fechaHasta)
+            if (normalizedFilters?.tipoServicio) query = query.eq('tipo_servicio', normalizedFilters.tipoServicio)
 
-          const { data, error } = await query
-          if (error) throw error
-          await replaceCachedServiciosListSnapshot(ownerId, data as Servicio[], normalizedFilters)
+            return query.range(from, to)
+          })
+
+          await replaceCachedServiciosListSnapshot(ownerId, servicios, normalizedFilters)
           return getCachedServiciosSnapshot(ownerId, normalizedFilters)
         },
         local: () => getCachedServiciosSnapshot(ownerId, normalizedFilters),
