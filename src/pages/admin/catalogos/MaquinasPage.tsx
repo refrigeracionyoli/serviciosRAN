@@ -27,7 +27,7 @@ import { MaquinaStatusBadge } from '@/components/shared/StatusBadge'
 import { useMaquinasQuery } from '@/hooks/use-maquinas'
 import { useMantenimientosQuery } from '@/hooks/use-mantenimientos'
 import { useServiciosQuery } from '@/hooks/use-servicios'
-import type { MaquinaStatus } from '@/types/domain.types'
+import type { MaquinaStatus, Servicio } from '@/types/domain.types'
 import { CatalogosSubNav } from './CatalogosSubNav'
 
 const PAGE_SIZE = 10
@@ -38,6 +38,33 @@ type ModeloFilter = 'all' | 'KM901' | 'MS1500' | 'SD1002' | 'KM1300'
 function normalizeText(value: string | null | undefined): string {
   if (!value) return ''
   return value.toLowerCase()
+}
+
+function parseActivityDate(value: string | null | undefined): Date | null {
+  if (!value) return null
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number)
+    return new Date(year, month - 1, day)
+  }
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function isSameMonth(value: string | null | undefined, reference: Date): boolean {
+  const date = parseActivityDate(value)
+  if (!date) return false
+
+  return date.getFullYear() === reference.getFullYear()
+    && date.getMonth() === reference.getMonth()
+}
+
+function isHistoricalExcelImport(servicio: Servicio): boolean {
+  return servicio.status === 'cerrado'
+    && servicio.tecnico_id == null
+    && Number(servicio.costo_refacciones ?? 0) === 0
+    && Number(servicio.costo_mano_obra ?? 0) === 0
 }
 
 export function MaquinasPage() {
@@ -52,18 +79,24 @@ export function MaquinasPage() {
   const { data: servicios = [], isLoading: loadingServicios } = useServiciosQuery()
   const { data: mantenimientos = [], isLoading: loadingMantenimientos } = useMantenimientosQuery()
   const isPageLoading = isLoading || loadingServicios || loadingMantenimientos
+  const maquinasInstaladas = useMemo(
+    () => maquinas.filter((maquina) => maquina.activo && maquina.status === 'operando' && maquina.cliente_id != null),
+    [maquinas],
+  )
 
   const actividadMes = useMemo(() => {
     const now = new Date()
-    const monthStartIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-    const monthEndIso = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
 
     const rows = [
       ...servicios
-        .filter((servicio) => servicio.maquina_id && servicio.created_at >= monthStartIso && servicio.created_at < monthEndIso)
+        .filter((servicio) => (
+          servicio.maquina_id
+          && !isHistoricalExcelImport(servicio)
+          && isSameMonth(servicio.fecha_servicio ?? servicio.fecha_solicitud ?? servicio.created_at, now)
+        ))
         .map((servicio) => ({ maquina_id: servicio.maquina_id })),
       ...mantenimientos
-        .filter((mantenimiento) => mantenimiento.maquina_id && mantenimiento.created_at >= monthStartIso && mantenimiento.created_at < monthEndIso)
+        .filter((mantenimiento) => mantenimiento.maquina_id && isSameMonth(mantenimiento.fecha_visita ?? mantenimiento.created_at, now))
         .map((mantenimiento) => ({ maquina_id: mantenimiento.maquina_id })),
     ]
 
@@ -80,7 +113,7 @@ export function MaquinasPage() {
   }, [mantenimientos, servicios])
 
   const filteredMaquinas = useMemo(() => {
-    return maquinas.filter((maquina) => {
+    return maquinasInstaladas.filter((maquina) => {
       if (modelo !== 'all' && maquina.modelo !== modelo) return false
       if (status !== 'all' && maquina.status !== status) return false
 
@@ -96,21 +129,21 @@ export function MaquinasPage() {
         maquina.cliente?.telefono,
       ].some((value) => normalizeText(value).includes(deferredSearch))
     })
-  }, [deferredSearch, maquinas, modelo, status])
+  }, [deferredSearch, maquinasInstaladas, modelo, status])
 
   const { totalMaquinas, operando, enTaller } = useMemo(() => {
     let operandoCount = 0
     let enTallerCount = 0
-    for (const maquina of maquinas) {
+    for (const maquina of maquinasInstaladas) {
       if (maquina.status === 'operando') operandoCount += 1
       if (maquina.status === 'en_taller') enTallerCount += 1
     }
     return {
-      totalMaquinas: maquinas.length,
+      totalMaquinas: maquinasInstaladas.length,
       operando: operandoCount,
       enTaller: enTallerCount,
     }
-  }, [maquinas])
+  }, [maquinasInstaladas])
 
   const totalPages = Math.max(1, Math.ceil(filteredMaquinas.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)

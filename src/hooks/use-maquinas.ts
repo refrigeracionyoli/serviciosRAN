@@ -26,6 +26,11 @@ interface MaquinasQueryOptions {
   includeInactive?: boolean
 }
 
+interface EditarMaquinaPayload {
+  id: number
+  data: EditarMaquinaInput
+}
+
 export function useMaquinasQuery(clienteIdOrOptions?: number | MaquinasQueryOptions) {
   const clienteId = typeof clienteIdOrOptions === 'number'
     ? clienteIdOrOptions
@@ -131,6 +136,43 @@ export function useEditarMaquinaMutation(id: number) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (data: EditarMaquinaInput) => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) {
+        throw new Error('No hay sesión activa para actualizar la máquina.')
+      }
+
+      if (isBrowserOnline() && !isLocalNumberId(id)) {
+        try {
+          const { data: updated, error } = await supabase
+            .from('maquinas')
+            .update(data)
+            .eq('id', id)
+            .select('*, cliente:clientes(id, nombre, codigo_cliente, direccion, municipio, telefono)')
+            .single()
+          if (error) throw error
+          return updated as Maquina
+        } catch (error) {
+          if (!isLikelyNetworkError(error)) throw error
+        }
+      }
+
+      return queueMaquinaUpdate(ownerId, id, data)
+    },
+    onSuccess: async (updated) => {
+      const ownerId = await getCurrentSessionUserId()
+      if (ownerId) {
+        await upsertCachedMaquinas(ownerId, [updated])
+      }
+      await qc.invalidateQueries({ queryKey: maquinasKeys.all })
+    },
+  })
+}
+
+export function useActualizarMaquinaMutation() {
+  const qc = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ id, data }: EditarMaquinaPayload) => {
       const ownerId = await getCurrentSessionUserId()
       if (!ownerId) {
         throw new Error('No hay sesión activa para actualizar la máquina.')
