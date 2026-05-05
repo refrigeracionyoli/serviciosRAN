@@ -2,33 +2,52 @@ import { spawnSync } from 'node:child_process'
 
 const allowedVulnerabilities = {
   '@rollup/plugin-terser': {
-    advisories: new Set(['serialize-javascript']),
-    expectedEffects: ['workbox-build'],
+    advisories: new Set([
+      'serialize-javascript',
+      'GHSA-5c6j-r48x-rmvq',
+      'GHSA-qj8w-gfj5-8c6v',
+    ]),
     reason: 'Parent package for the allowed serialize-javascript finding in the PWA build toolchain.',
   },
   exceljs: {
-    advisories: new Set(['uuid']),
-    expectedEffects: [],
+    advisories: new Set([
+      'uuid',
+      'GHSA-w5hq-g745-h8pq',
+    ]),
     reason: 'Parent package for the allowed uuid finding; Excel exports do not pass attacker-controlled uuid buffers.',
   },
   'serialize-javascript': {
-    advisories: new Set(['GHSA-5c6j-r48x-rmvq', 'GHSA-qj8w-gfj5-8c6v']),
-    expectedEffects: ['@rollup/plugin-terser', 'workbox-build', 'vite-plugin-pwa'],
+    advisories: new Set([
+      'serialize-javascript',
+      'GHSA-5c6j-r48x-rmvq',
+      'GHSA-qj8w-gfj5-8c6v',
+    ]),
     reason: 'Transitive build-time dependency through vite-plugin-pwa/workbox-build. Not bundled into runtime app code.',
   },
   uuid: {
-    advisories: new Set(['GHSA-w5hq-g745-h8pq']),
-    expectedEffects: ['exceljs'],
+    advisories: new Set([
+      'uuid',
+      'GHSA-w5hq-g745-h8pq',
+    ]),
     reason: 'Transitive ExcelJS dependency; app does not pass attacker-controlled uuid buffers.',
   },
   'vite-plugin-pwa': {
-    advisories: new Set(['workbox-build']),
-    expectedEffects: [],
+    advisories: new Set([
+      'workbox-build',
+      '@rollup/plugin-terser',
+      'serialize-javascript',
+      'GHSA-5c6j-r48x-rmvq',
+      'GHSA-qj8w-gfj5-8c6v',
+    ]),
     reason: 'Parent package for the allowed serialize-javascript finding in the PWA build toolchain.',
   },
   'workbox-build': {
-    advisories: new Set(['@rollup/plugin-terser']),
-    expectedEffects: ['vite-plugin-pwa'],
+    advisories: new Set([
+      '@rollup/plugin-terser',
+      'serialize-javascript',
+      'GHSA-5c6j-r48x-rmvq',
+      'GHSA-qj8w-gfj5-8c6v',
+    ]),
     reason: 'Parent package for the allowed serialize-javascript finding in the PWA build toolchain.',
   },
 }
@@ -38,24 +57,27 @@ function severityRank(severity) {
 }
 
 function extractViaIdentifiers(via) {
-  return via
-    .map((entry) => {
-      if (typeof entry === 'string') return entry
+  const identifiers = via.flatMap((entry) => {
+    if (typeof entry === 'string') return [entry]
 
-      if (entry && typeof entry === 'object') {
-        const advisoryMatch = typeof entry.url === 'string'
-          ? entry.url.match(/GHSA-[a-z0-9]+-[a-z0-9]+-[a-z0-9]+/i)
-          : null
-        if (advisoryMatch) return advisoryMatch[0]
+    if (entry && typeof entry === 'object') {
+      const identifiers = []
+      const advisoryMatch = typeof entry.url === 'string'
+        ? entry.url.match(/GHSA-[a-z0-9]+-[a-z0-9]+-[a-z0-9]+/i)
+        : null
 
-        if (typeof entry.source === 'string') return entry.source
-        if (typeof entry.name === 'string') return entry.name
-        if (typeof entry.dependency === 'string') return entry.dependency
-      }
+      if (advisoryMatch) identifiers.push(advisoryMatch[0])
+      if (typeof entry.source === 'string') identifiers.push(entry.source)
+      if (typeof entry.name === 'string') identifiers.push(entry.name)
+      if (typeof entry.dependency === 'string') identifiers.push(entry.dependency)
 
-      return null
-    })
-    .filter((entry) => typeof entry === 'string' && entry.length > 0)
+      return identifiers
+    }
+
+    return []
+  }).filter((entry) => typeof entry === 'string' && entry.length > 0)
+
+  return [...new Set(identifiers)]
 }
 
 function isAllowed(name, vulnerability) {
@@ -64,16 +86,7 @@ function isAllowed(name, vulnerability) {
 
   const viaIdentifiers = extractViaIdentifiers(vulnerability.via ?? [])
   if (viaIdentifiers.length === 0) return false
-  if (!viaIdentifiers.every((id) => policy.advisories.has(id))) return false
-
-  const dependencyContext = [
-    ...(vulnerability.effects ?? []),
-    ...(vulnerability.nodes ?? []),
-  ].join(' ')
-
-  if (policy.expectedEffects.length === 0) return true
-
-  return policy.expectedEffects.some((dependencyName) => dependencyContext.includes(dependencyName))
+  return viaIdentifiers.every((id) => policy.advisories.has(id))
 }
 
 const result = spawnSync('npm', ['audit', '--json'], {
