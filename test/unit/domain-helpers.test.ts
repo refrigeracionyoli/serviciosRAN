@@ -63,16 +63,16 @@ describe('domain helper functions', () => {
     })
 
     const complete = summarizeServicioEvidencias([...photos, order])
-    expect(complete.cantidadFotos).toBe(4)
+    expect(complete.cantidadFotos).toBe(REQUIRED_SERVICE_PHOTOS)
     expect(complete.tieneOrdenServicio).toBe(true)
     expect(complete.puedeCompletar).toBe(true)
     expect(buildServicioCompletionRequirementMessage(complete)).toContain('Ya tienes')
 
-    const incomplete = summarizeServicioEvidencias(photos.slice(0, 2))
-    expect(incomplete.faltanFotos).toBe(2)
+    const incomplete = summarizeServicioEvidencias([])
+    expect(incomplete.faltanFotos).toBe(REQUIRED_SERVICE_PHOTOS)
     expect(incomplete.tieneOrdenServicio).toBe(false)
     expect(incomplete.puedeCompletar).toBe(false)
-    expect(buildServicioCompletionRequirementMessage(incomplete)).toContain('Faltan 2 fotos de evidencia y la orden de servicio')
+    expect(buildServicioCompletionRequirementMessage(incomplete)).toContain('Faltan 1 foto de evidencia y la orden de servicio')
   })
 
   it('normalizes technician inventory history fields and detects missing-schema failures', () => {

@@ -545,7 +545,7 @@ export function TecnicoEvidenciaPage() {
               <p className="text-[13px] text-ran-slate">
                 {isReadOnly
                   ? 'El servicio ya está cerrado. Puedes revisar las evidencias registradas.'
-                  : `Captura el estado del servicio y sus resultados. Se requieren ${REQUIRED_SERVICE_PHOTOS} fotos y puedes subirlas desde cámara o galería.`}
+                  : `Captura el estado del servicio y sus resultados. Se requiere mínimo ${REQUIRED_SERVICE_PHOTOS} foto y puedes subir más desde cámara o galería.`}
               </p>
             </div>
             {!isReadOnly ? (

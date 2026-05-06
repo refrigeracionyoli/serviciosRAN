@@ -1,6 +1,6 @@
 import type { Evidencia } from '@/types/domain.types'
 
-export const REQUIRED_SERVICE_PHOTOS = 4
+export const REQUIRED_SERVICE_PHOTOS = 1
 
 export interface ServicioEvidenceSummary {
   fotos: Evidencia[]
@@ -40,7 +40,7 @@ export function summarizeServicioEvidencias(evidencias: Evidencia[]): ServicioEv
 
 export function buildServicioCompletionRequirementMessage(summary: ServicioEvidenceSummary): string {
   if (summary.puedeCompletar) {
-    return 'Ya tienes las 4 fotos y la orden de servicio requeridas para completar este servicio.'
+    return 'Ya tienes al menos 1 foto y la orden de servicio requeridas para completar este servicio.'
   }
 
   const missingParts: string[] = []

@@ -40,6 +40,7 @@ import {
   type CrearClienteInput,
   type CrearMaquinaInput,
 } from '@/schemas/cliente.schema'
+import { REQUIRED_SERVICE_PHOTOS } from '@/lib/tecnico/servicio-evidencias'
 import {
   useEvidenciasQuery,
   useEvidenciaUrlQuery,
@@ -563,7 +564,7 @@ export function ServicioForm({
     [evidencias],
   )
 
-  const fotosFaltantes = Math.max(0, 4 - evidenciasFotos.length)
+  const fotosFaltantes = Math.max(0, REQUIRED_SERVICE_PHOTOS - evidenciasFotos.length)
 
   // Sincronizar formulario cuando llegan datos actualizados del servidor
   useEffect(() => {
@@ -1391,10 +1392,10 @@ export function ServicioForm({
             <div className="flex items-center justify-between gap-3">
               <h4 className="text-lg font-bold text-ran-navy">Evidencias fotográficas</h4>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${fotosFaltantes === 0 ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'}`}>
-                {evidenciasFotos.length}/4 mínimo
+                {evidenciasFotos.length}/{REQUIRED_SERVICE_PHOTOS} mínimo
               </span>
             </div>
-            <p className="mt-1 text-sm text-ran-slate">Sube mínimo 4 fotos del servicio y agrega más si es necesario.</p>
+            <p className="mt-1 text-sm text-ran-slate">Sube mínimo 1 foto del servicio y agrega más si es necesario.</p>
 
             {!servicio?.id ? (
               <div className="mt-4 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-ran-slate">
@@ -1404,7 +1405,7 @@ export function ServicioForm({
               <>
                 <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
                   {loadingEvidencias ? (
-                    Array.from({ length: 4 }).map((_, index) => (
+                    Array.from({ length: REQUIRED_SERVICE_PHOTOS }).map((_, index) => (
                       <div key={`skeleton-${index}`} className="h-36 animate-pulse rounded-xl bg-slate-100" />
                     ))
                   ) : (
@@ -1418,7 +1419,7 @@ export function ServicioForm({
                           onPreview={setPreviewEvidencia}
                         />
                       ))}
-                      {Array.from({ length: Math.max(0, 4 - evidenciasFotos.length) }).map((_, index) => (
+                      {Array.from({ length: Math.max(0, REQUIRED_SERVICE_PHOTOS - evidenciasFotos.length) }).map((_, index) => (
                         <div key={`placeholder-${index}`} className="flex h-36 flex-col items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-center text-xs text-ran-slate">
                           <Camera className="mb-2 h-5 w-5 text-slate-400" />
                           Evidencia pendiente
@@ -1430,7 +1431,9 @@ export function ServicioForm({
 
                 {fotosFaltantes > 0 && (
                   <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    Faltan {fotosFaltantes} evidencia(s) para cumplir el mínimo de 4.
+                    {fotosFaltantes === 1
+                      ? `Falta 1 evidencia para cumplir el mínimo de ${REQUIRED_SERVICE_PHOTOS}.`
+                      : `Faltan ${fotosFaltantes} evidencias para cumplir el mínimo de ${REQUIRED_SERVICE_PHOTOS}.`}
                   </div>
                 )}
 
