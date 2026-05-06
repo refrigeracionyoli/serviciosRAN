@@ -123,9 +123,8 @@ export const crearServicioSchema = servicioBaseSchema.superRefine(validateServic
 
 export const editarServicioSchema = servicioBaseSchema.partial().extend({
   status: z
-    .enum(['pendiente', 'en_ruta', 'completado'])
+    .enum(['pendiente', 'en_ruta', 'completado', 'cerrado'])
     .optional(),
-  // El admin puede cambiar a 'cerrado' pero eso se hace desde CierreForm
 }).superRefine(validateServiceDateOrder)
 
 export const cambiarStatusSchema = z.object({

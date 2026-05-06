@@ -68,7 +68,7 @@ describe('domain schemas', () => {
     expect(valid.aviso).toBe(7001)
     expect(crearServicioSchema.safeParse({ ...valid, fecha_solicitud: '2026-04-27' }).success).toBe(false)
     expect(crearServicioSchema.safeParse({ ...valid, fecha_solicitud: '2026-04-26', fecha_servicio: '2026-04-25' }).success).toBe(false)
-    expect(editarServicioSchema.safeParse({ status: 'cerrado' }).success).toBe(false)
+    expect(editarServicioSchema.safeParse({ status: 'cerrado' }).success).toBe(true)
   })
 
   it('requires a valid evidence-backed closure payload with non-future fecha_cierre', () => {

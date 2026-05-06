@@ -111,7 +111,7 @@ export function ServicioEditarPage() {
   const servicioId = Number(id)
   const navigate = useNavigate()
   const { toast } = useToast()
-  const [statusEdit, setStatusEdit] = useState<EditableServicioStatus>('pendiente')
+  const [statusEdit, setStatusEdit] = useState<ServicioStatus>('pendiente')
   const [refaccionesDraft, setRefaccionesDraft] = useState<RefaccionInput[]>([])
   const [formDraft, setFormDraft] = useState<Partial<CrearServicioInput> | null>(null)
   const [clearDraftSignal, setClearDraftSignal] = useState(0)
@@ -122,7 +122,7 @@ export function ServicioEditarPage() {
   const lastLoadedRefaccionesRef = useRef<RefaccionInput[] | null>(null)
   
   // Guardar valores últimamente guardados para comparación
-  const [lastSavedStatus, setLastSavedStatus] = useState<EditableServicioStatus | null>(null)
+  const [lastSavedStatus, setLastSavedStatus] = useState<ServicioStatus | null>(null)
   const [lastSavedRefacciones, setLastSavedRefacciones] = useState<RefaccionInput[]>([])
 
   const { data: servicio, isLoading } = useServicioDetalleQuery(servicioId)
@@ -132,7 +132,7 @@ export function ServicioEditarPage() {
     mutateAsync: editarServicioAsync,
     isPending,
   } = useEditarServicioMutation(servicioId)
-  const { mutate: cerrarServicio, isPending: cerrando } = useCerrarServicioMutation(servicioId)
+  const { mutateAsync: cerrarServicioAsync, isPending: cerrando } = useCerrarServicioMutation(servicioId)
   const { data: refaccionesData, isLoading: loadingRefacciones } = useServicioRefaccionesQuery(servicioId)
   const { mutateAsync: guardarRefaccionesAsync, isPending: savingRefacciones } = useGuardarServicioRefaccionesMutation(servicioId)
   const { data: inventarioTecnicoServicio = [] } = useInventarioTecnicoQuery(
@@ -143,16 +143,11 @@ export function ServicioEditarPage() {
   const refacciones = refaccionesData ?? EMPTY_REFACCIONES
 
   useEffect(() => {
-    if (servicio && servicio.status !== 'cerrado') {
+    if (servicio) {
       setStatusEdit(servicio.status)
       setLastSavedStatus(servicio.status)
     }
   }, [servicio])
-
-  useEffect(() => {
-    if (servicio?.status !== 'cerrado') return
-    navigate(`/servicios/${servicioId}`, { replace: true })
-  }, [servicio?.status, navigate, servicioId])
 
   const defaultRefacciones = useMemo(
     () =>
@@ -310,6 +305,29 @@ export function ServicioEditarPage() {
         ? `Antes de cerrar el servicio: ${buildServicioCompletionRequirementMessage(evidenciasSummary)}`
         : 'Completa el formulario de cierre y da clic en "Cerrar servicio".'
 
+  const buildCierreUpdateInput = (
+    data: CrearServicioInput,
+    costoTotal: number,
+  ): CierreInput | null => {
+    if (!cierre) return null
+
+    const tecnicoId = cierre.tecnico_id ?? data.tecnico_id ?? servicio.tecnico_id
+    const aviso = cierre.aviso ?? data.aviso ?? servicio.aviso
+    if (!tecnicoId || !aviso) return null
+
+    return {
+      servicio_id: servicioId,
+      aviso,
+      parte_objeto: cierre.parte_objeto,
+      causa: cierre.causa,
+      descripcion: cierre.descripcion,
+      costo_total: costoTotal,
+      tecnico_id: tecnicoId,
+      fecha_cierre: getSafeFechaCierre(servicio.fecha_cierre ?? data.fecha_servicio ?? data.fecha_solicitud),
+      firma_receptor: cierre.firma_receptor,
+    }
+  }
+
   const handleChangeStatus = (value: EditableServicioStatus) => {
     setStatusEdit(value)
     setHasUnsavedChanges(true)
@@ -319,6 +337,10 @@ export function ServicioEditarPage() {
     (item) => typeof item.inventario_id !== 'number' || item.inventario_id <= 0,
   )
   const totalRefaccionesServicio = calculateRefaccionesTotal(refaccionesDraft)
+  const hasRefaccionesDraftChanges = !areRefaccionesEqual(refaccionesDraft, lastSavedRefacciones)
+  const draftCostoTotal = roundCurrency(
+    Number(formDraft?.costo_mano_obra ?? servicio.costo_mano_obra ?? 0) + totalRefaccionesServicio,
+  )
 
   const buildCierreDefaults = (data: CrearServicioInput): CierreDefaults => {
     return {
@@ -334,16 +356,6 @@ export function ServicioEditarPage() {
     options?: { requireCompleted?: boolean; silent?: boolean },
   ): Promise<boolean> => {
     try {
-      if (servicio.status === 'cerrado') {
-        toast({
-          title: 'Servicio cerrado',
-          description: 'Este servicio ya no puede actualizarse.',
-          variant: 'destructive',
-        })
-        navigate(`/servicios/${servicioId}`, { replace: true })
-        return false
-      }
-
       if (options?.requireCompleted && statusEdit !== 'completado') {
         toast({
           title: 'Cierre no disponible',
@@ -368,6 +380,7 @@ export function ServicioEditarPage() {
         || hasServicioDataChanges(data, servicio)
       )
       const refaccionesChanged = !areRefaccionesEqual(refaccionesDraft, lastSavedRefacciones)
+      const nextCostoTotal = roundCurrency(Number(data.costo_mano_obra ?? 0) + totalRefaccionesServicio)
 
       if (servicioChanged) {
         await editarServicioAsync({ ...data, status: statusEdit })
@@ -375,6 +388,13 @@ export function ServicioEditarPage() {
 
       if (refaccionesChanged) {
         await guardarRefaccionesAsync(refaccionesDraft)
+      }
+
+      if (cierre && (servicioChanged || refaccionesChanged)) {
+        const cierreUpdate = buildCierreUpdateInput(data, nextCostoTotal)
+        if (cierreUpdate) {
+          await cerrarServicioAsync(cierreUpdate)
+        }
       }
 
       setLastSavedStatus(statusEdit)
@@ -408,28 +428,23 @@ export function ServicioEditarPage() {
     return true
   }
 
-  const handleCerrar = (data: CierreInput) => {
-    cerrarServicio(
-      {
+  const handleCerrar = async (data: CierreInput) => {
+    try {
+      await cerrarServicioAsync({
         ...data,
         costo_total: data.costo_total ?? cierreDefaults?.costoTotal ?? null,
-      },
-      {
-        onSuccess: () => {
-          setHasUnsavedChanges(false)
-          setCierreDraft(false)
-          navigate(`/servicios/${servicioId}`, { replace: true })
-        },
-        onError: (error) => {
-          const message = error instanceof Error ? error.message : 'No se pudo cerrar el servicio.'
-          toast({
-            title: 'Error al cerrar servicio',
-            description: message,
-            variant: 'destructive',
-          })
-        },
-      },
-    )
+      })
+      setHasUnsavedChanges(false)
+      setCierreDraft(false)
+      navigate(`/servicios/${servicioId}`, { replace: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo guardar el cierre.'
+      toast({
+        title: 'Error al guardar cierre',
+        description: message,
+        variant: 'destructive',
+      })
+    }
   }
 
   return (
@@ -480,10 +495,10 @@ export function ServicioEditarPage() {
           <Button
             type="submit"
             form="editar-servicio-form"
-            disabled={isPending || savingRefacciones || !hasUnsavedChanges || servicio.status === 'cerrado'}
+            disabled={isPending || savingRefacciones || cerrando || !hasUnsavedChanges}
             className="h-10 rounded-xl bg-ran-navy px-6 text-sm font-semibold hover:bg-ran-navy/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isPending || savingRefacciones ? 'Guardando...' : 'Actualizar servicio'}
+            {isPending || savingRefacciones || cerrando ? 'Guardando...' : 'Actualizar servicio'}
           </Button>
         </div>
       </div>
@@ -522,16 +537,20 @@ export function ServicioEditarPage() {
           cierreContent={
             <CierreForm
               servicioId={servicioId}
-              defaultAviso={cierreDefaults?.aviso ?? servicio.aviso}
-              defaultTecnicoId={cierreDefaults?.tecnicoId ?? servicio.tecnico_id}
+              defaultAviso={cierreDefaults?.aviso ?? cierre?.aviso ?? servicio.aviso}
+              defaultTecnicoId={cierreDefaults?.tecnicoId ?? cierre?.tecnico_id ?? servicio.tecnico_id}
               defaultCostoTotal={
                 cierreDefaults?.costoTotal
-                ?? roundCurrency(Number(servicio.costo_mano_obra ?? 0) + Number(servicio.costo_refacciones ?? 0))
+                ?? (formDraft || hasRefaccionesDraftChanges ? draftCostoTotal : cierre?.costo_total)
+                ?? draftCostoTotal
               }
               defaultFechaCierre={cierreDefaults?.fechaCierre ?? getDefaultFechaCierre(servicio)}
+              cierre={cierre}
               onSubmit={handleCerrar}
               onDraftChange={() => setCierreDraft(true)}
               isLoading={cerrando}
+              submitLabel={cierre ? 'Guardar cierre' : 'Cerrar servicio'}
+              loadingLabel={cierre ? 'Guardando cierre...' : 'Cerrando servicio...'}
             />
           }
           onSubmit={(data) => {

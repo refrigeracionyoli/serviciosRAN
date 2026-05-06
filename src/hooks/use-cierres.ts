@@ -123,6 +123,21 @@ async function withComputedCostoTotal(
   }
 }
 
+async function persistServicioCierreStatus(
+  servicioId: number,
+  fechaCierre: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('servicios')
+    .update({
+      status: 'cerrado',
+      fecha_cierre: fechaCierre,
+    })
+    .eq('id', servicioId)
+
+  if (error) throw error
+}
+
 export function useCierreQuery(servicioId: number) {
   return useQuery({
     queryKey: cierresKeys.byServicio(servicioId),
@@ -202,24 +217,27 @@ export function useCerrarServicioMutation(servicioId: number) {
         throw new Error('No hay sesión activa para cerrar el servicio.')
       }
 
-      await assertServicioCanBeClosed(ownerId, servicioId)
-      const cierreInput = await withComputedCostoTotal(ownerId, servicioId, data)
-
       if (isBrowserOnline() && !isLocalNumberId(servicioId)) {
-        const fechaCierre = getFechaCierreForServicio(cierreInput)
         try {
           const existing = await findRemoteCierreByServicioId(servicioId)
-          if (existing) {
-            const { error: statusError } = await supabase
-              .from('servicios')
-              .update({
-                status: 'cerrado',
-                fecha_cierre: fechaCierre,
-              })
-              .eq('id', servicioId)
-            if (statusError) throw statusError
+          if (!existing) {
+            await assertServicioCanBeClosed(ownerId, servicioId)
+          }
 
-            return existing
+          const cierreInput = await withComputedCostoTotal(ownerId, servicioId, data)
+          const fechaCierre = getFechaCierreForServicio(cierreInput)
+
+          if (existing) {
+            const { data: cierre, error: cierreError } = await supabase
+              .from('cierres')
+              .update(toCierreInsertInput(cierreInput))
+              .eq('id', existing.id)
+              .select()
+              .single()
+            if (cierreError) throw cierreError
+
+            await persistServicioCierreStatus(servicioId, fechaCierre)
+            return cierre as Cierre
           }
 
           const { data: cierre, error: cierreError } = await supabase
@@ -229,30 +247,25 @@ export function useCerrarServicioMutation(servicioId: number) {
             .single()
           if (cierreError) throw cierreError
 
-          const { error: statusError } = await supabase
-            .from('servicios')
-            .update({
-              status: 'cerrado',
-              fecha_cierre: fechaCierre,
-            })
-            .eq('id', servicioId)
-          if (statusError) throw statusError
+          await persistServicioCierreStatus(servicioId, fechaCierre)
 
           return cierre as Cierre
         } catch (error) {
           if (isLikelyUniqueViolation(error)) {
             const duplicated = await findRemoteCierreByServicioId(servicioId)
             if (duplicated) {
-              const { error: statusError } = await supabase
-                .from('servicios')
-                .update({
-                  status: 'cerrado',
-                  fecha_cierre: fechaCierre,
-                })
-                .eq('id', servicioId)
-              if (statusError) throw statusError
+              const cierreInput = await withComputedCostoTotal(ownerId, servicioId, data)
+              const fechaCierre = getFechaCierreForServicio(cierreInput)
+              const { data: cierre, error: cierreError } = await supabase
+                .from('cierres')
+                .update(toCierreInsertInput(cierreInput))
+                .eq('id', duplicated.id)
+                .select()
+                .single()
+              if (cierreError) throw cierreError
 
-              return duplicated
+              await persistServicioCierreStatus(servicioId, fechaCierre)
+              return cierre as Cierre
             }
           }
 
@@ -260,6 +273,8 @@ export function useCerrarServicioMutation(servicioId: number) {
         }
       }
 
+      await assertServicioCanBeClosed(ownerId, servicioId)
+      const cierreInput = await withComputedCostoTotal(ownerId, servicioId, data)
       return queueServicioClose(ownerId, servicioId, cierreInput)
     },
     onSuccess: async (cierre) => {

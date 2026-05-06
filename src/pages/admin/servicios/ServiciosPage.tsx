@@ -964,12 +964,10 @@ export function ServiciosPage() {
                               <Eye className="h-4 w-4" />
                               Ver detalle
                             </DropdownMenuItem>
-                            {servicio.status !== 'cerrado' && (
-                              <DropdownMenuItem className="cursor-pointer" onClick={() => navigate(`/servicios/${servicio.id}/editar`)}>
-                                <Pencil className="h-4 w-4" />
-                                Editar
-                              </DropdownMenuItem>
-                            )}
+                            <DropdownMenuItem className="cursor-pointer" onClick={() => navigate(`/servicios/${servicio.id}/editar`)}>
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </td>

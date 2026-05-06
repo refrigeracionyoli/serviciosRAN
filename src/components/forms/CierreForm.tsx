@@ -9,6 +9,7 @@ import { useCierresCatalogoQuery } from '@/hooks/use-cierres'
 import { useTecnicosQuery } from '@/hooks/use-tecnicos'
 import { DatePickerInput } from '@/components/shared/DatePickerInput'
 import { formatLocalIsoDate } from '@/lib/utils'
+import type { Cierre } from '@/types/domain.types'
 import {
   Select,
   SelectContent,
@@ -27,6 +28,9 @@ interface Props {
   defaultTecnicoId?: string | null
   defaultCostoTotal?: number | null
   defaultFechaCierre?: string | null
+  cierre?: Cierre | null
+  submitLabel?: string
+  loadingLabel?: string
 }
 
 function normalizeCatalogValues(values: Array<string | null | undefined>): string[] {
@@ -53,6 +57,9 @@ export function CierreForm({
   defaultTecnicoId,
   defaultCostoTotal,
   defaultFechaCierre,
+  cierre,
+  submitLabel = 'Cerrar servicio',
+  loadingLabel = 'Cerrando servicio...',
 }: Props) {
   const { data: tecnicos = [] } = useTecnicosQuery()
   const { data: catalogoCierres = [] } = useCierresCatalogoQuery()
@@ -79,11 +86,15 @@ export function CierreForm({
     defaultValues: {
       servicio_id: servicioId,
       aviso: defaultAviso ?? undefined,
+      parte_objeto: cierre?.parte_objeto ?? undefined,
+      causa: cierre?.causa ?? undefined,
+      descripcion: cierre?.descripcion ?? '',
       tecnico_id: defaultTecnicoId ?? undefined,
       costo_total: defaultCostoTotal ?? undefined,
       fecha_cierre: defaultFechaCierre && defaultFechaCierre <= todayIso
         ? defaultFechaCierre
         : todayIso,
+      firma_receptor: cierre?.firma_receptor ?? undefined,
     },
   })
 
@@ -97,6 +108,13 @@ export function CierreForm({
       setValue('aviso', defaultAviso)
     }
   }, [defaultAviso, setValue])
+
+  useEffect(() => {
+    setValue('parte_objeto', cierre?.parte_objeto ?? null)
+    setValue('causa', cierre?.causa ?? null)
+    setValue('descripcion', cierre?.descripcion ?? '')
+    setValue('firma_receptor', cierre?.firma_receptor ?? null)
+  }, [cierre, setValue])
 
   useEffect(() => {
     if (defaultTecnicoId) {
@@ -285,12 +303,12 @@ export function CierreForm({
 
       <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
         <p className="text-sm font-medium text-amber-800">
-          ⚠️ Al guardar este cierre, el status del servicio cambiará a <strong>Cerrado</strong> y no podrá ser modificado.
+          Al guardar este formulario, el status del servicio permanecerá como <strong>Cerrado</strong>.
         </p>
       </div>
 
       <Button type="submit" disabled={isLoading} className="w-full bg-ran-navy hover:bg-ran-navy/90">
-        {isLoading ? 'Cerrando servicio…' : 'Cerrar servicio'}
+        {isLoading ? loadingLabel : submitLabel}
       </Button>
     </form>
   )

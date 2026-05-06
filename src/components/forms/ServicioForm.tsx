@@ -1318,8 +1318,20 @@ export function ServicioForm({
             </p>
 
             {servicio?.status === 'cerrado' || Boolean(cierre) ? (
-              <div className="mt-3 rounded-lg border border-green-200 bg-green-50 px-2.5 py-1.5 text-xs font-semibold text-green-700">
-                Servicio cerrado ✓
+              <div className="mt-3 space-y-2">
+                <div className="rounded-lg border border-green-200 bg-green-50 px-2.5 py-1.5 text-xs font-semibold text-green-700">
+                  Servicio cerrado ✓
+                </div>
+                {cierreContent ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full rounded-xl text-sm"
+                    onClick={() => setOpenCierreDialog(true)}
+                  >
+                    Editar formulario de cierre
+                  </Button>
+                ) : null}
               </div>
             ) : (
               <div className="mt-3 space-y-2">
@@ -1505,7 +1517,7 @@ export function ServicioForm({
           <DialogHeader>
             <DialogTitle>Formulario de cierre</DialogTitle>
             <DialogDescription>
-              Completa los datos para cerrar el servicio. Al guardar, el status cambiará a cerrado.
+              Completa o corrige los datos del cierre. Al guardar, el status quedará como cerrado.
             </DialogDescription>
           </DialogHeader>
           {cierreContent}

@@ -176,17 +176,15 @@ export function ServicioDetallePage() {
         </div>
 
         <div className="flex items-center justify-end gap-3">
-          {servicio.status !== 'cerrado' && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate(`/servicios/${servicioId}/editar`)}
-              className="h-10 gap-2 rounded-xl"
-            >
-              <Pencil className="h-4 w-4" />
-              Editar
-            </Button>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => navigate(`/servicios/${servicioId}/editar`)}
+            className="h-10 gap-2 rounded-xl"
+          >
+            <Pencil className="h-4 w-4" />
+            Editar
+          </Button>
           <Button
             variant="outline"
             size="sm"
