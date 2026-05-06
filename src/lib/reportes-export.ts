@@ -1,6 +1,6 @@
 import UZIP from 'uzip'
 import type { Workbook, Worksheet } from 'exceljs'
-import { getPresignedGetUrl } from '@/lib/r2'
+import { downloadEvidenciaBlob } from '@/lib/r2'
 import { supabase } from '@/lib/supabase'
 import { isOrdenServicioFilename } from '@/lib/tecnico/servicio-evidencias'
 import type {
@@ -30,6 +30,31 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const ZIP_MIME = 'application/zip'
 const REPORT_PROVIDER_DEFAULT = 4010269
 const REPORT_GZ_DEFAULT = 'NUEVO LEON'
+
+export type WeeklyReportExportMode =
+  | 'todos'
+  | 'instalaciones_retiros'
+  | 'mantenimientos'
+  | 'ambos'
+
+const WEEKLY_REPORT_MODE_CONFIG: Record<WeeklyReportExportMode, { label: string; slug: string }> = {
+  todos: {
+    label: 'todos los servicios',
+    slug: 'Todos',
+  },
+  instalaciones_retiros: {
+    label: 'instalaciones y retiros',
+    slug: 'InstalacionesRetiros',
+  },
+  mantenimientos: {
+    label: 'mantenimientos',
+    slug: 'Mantenimientos',
+  },
+  ambos: {
+    label: 'ambos reportes',
+    slug: 'Ambos',
+  },
+}
 
 const PHOTO_SLOTS = [
   {
@@ -69,6 +94,7 @@ export interface WeeklyReportExportInput {
   semana: string
   fechaInicio: string
   fechaFin: string
+  reportMode?: WeeklyReportExportMode
   tecnicoId?: string | null
   clienteId?: number | null
   tipoServicio?: string | null
@@ -190,7 +216,7 @@ interface SummaryDisplayRow {
 
 interface EmbeddedImage {
   bytes: Uint8Array
-  extension: 'jpeg' | 'png'
+  extension: 'jpeg' | 'png' | 'gif'
   mimeType: string
 }
 
@@ -346,6 +372,65 @@ function emitWeeklyReportProgress(
     completedServices,
     totalServices,
   })
+}
+
+function normalizeServiceTypeText(value: string | null | undefined): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+}
+
+function isInstallationOrRetiroService(servicio: Pick<Servicio, 'tipo_servicio'>): boolean {
+  const tipoServicio = normalizeServiceTypeText(servicio.tipo_servicio)
+  return tipoServicio.includes('INSTALACION') || tipoServicio.includes('RETIRO')
+}
+
+function getWeeklyReportMode(input: WeeklyReportExportInput): WeeklyReportExportMode {
+  return input.reportMode ?? 'todos'
+}
+
+function getWeeklyReportModeConfig(mode: WeeklyReportExportMode) {
+  return WEEKLY_REPORT_MODE_CONFIG[mode]
+}
+
+function filterBundlesByWeeklyReportMode(
+  bundles: ServiceEvidenceExportBundle[],
+  mode: WeeklyReportExportMode,
+): ServiceEvidenceExportBundle[] {
+  if (mode === 'todos' || mode === 'ambos') return bundles
+  if (mode === 'instalaciones_retiros') {
+    return bundles.filter((bundle) => isInstallationOrRetiroService(bundle.servicio))
+  }
+  return bundles.filter((bundle) => !isInstallationOrRetiroService(bundle.servicio))
+}
+
+function buildNoWeeklyServicesMessage(input: WeeklyReportExportInput): string {
+  const mode = getWeeklyReportMode(input)
+  if (mode === 'ambos' || mode === 'todos') {
+    return 'No hay servicios cerrados en la semana seleccionada para exportar.'
+  }
+
+  return `No hay servicios cerrados de ${getWeeklyReportModeConfig(mode).label} en la semana seleccionada.`
+}
+
+function withProgressRange(
+  options: BuildWeeklyReportOptions | undefined,
+  start: number,
+  end: number,
+): BuildWeeklyReportOptions | undefined {
+  if (!options) return undefined
+
+  return {
+    ...options,
+    onProgress: (progress) => {
+      const mappedProgress = start + ((Math.max(0, Math.min(100, progress.progress)) / 100) * (end - start))
+      options.onProgress?.({
+        ...progress,
+        progress: mappedProgress,
+      })
+    },
+  }
 }
 
 function xmlText(bytes: Uint8Array): string {
@@ -1489,13 +1574,14 @@ async function prepareWeeklyBundlesForWorker(
   )
   await yieldToBrowser(options?.signal)
 
-  const bundles = await fetchWeeklyBundles(input, options?.signal)
+  const fetchedBundles = await fetchWeeklyBundles(input, options?.signal)
+  const bundles = filterBundlesByWeeklyReportMode(fetchedBundles, getWeeklyReportMode(input))
   if (bundles.length === 0) {
-    throw new Error('No hay servicios cerrados en la semana seleccionada para exportar.')
+    throw new Error(buildNoWeeklyServicesMessage(input))
   }
 
-  const evidencias = bundles.flatMap((bundle) => bundle.evidencias)
-  if (evidencias.length === 0) {
+  const totalEvidencias = bundles.reduce((total, bundle) => total + bundle.evidencias.length, 0)
+  if (totalEvidencias === 0) {
     emitWeeklyReportProgress(
       options,
       16,
@@ -1511,39 +1597,12 @@ async function prepareWeeklyBundlesForWorker(
     options,
     10,
     'Preparando evidencias',
-    `Autorizando descarga de ${evidencias.length} evidencia(s)...`,
+    `${totalEvidencias} evidencia(s) listas para descarga segura.`,
     0,
     bundles.length,
   )
 
-  const signedUrlByKey = new Map<string, string>()
-  let completed = 0
-  await mapWithConcurrency(evidencias, 6, options?.signal, async (evidencia) => {
-    if (!signedUrlByKey.has(evidencia.r2_key)) {
-      const { downloadUrl } = await getPresignedGetUrl(evidencia.r2_key, { signal: options?.signal })
-      signedUrlByKey.set(evidencia.r2_key, downloadUrl)
-    }
-
-    completed += 1
-    if (completed === evidencias.length || completed % 3 === 0) {
-      emitWeeklyReportProgress(
-        options,
-        10 + ((completed / evidencias.length) * 8),
-        'Preparando evidencias',
-        `${completed} de ${evidencias.length} evidencia(s) autorizadas.`,
-        0,
-        bundles.length,
-      )
-    }
-  })
-
-  return bundles.map((bundle) => ({
-    ...bundle,
-    evidencias: bundle.evidencias.map((evidencia) => ({
-      ...evidencia,
-      downloadUrl: signedUrlByKey.get(evidencia.r2_key) ?? evidencia.downloadUrl,
-    })),
-  }))
+  return bundles
 }
 
 function fillWeeklyCaratula(
@@ -1890,12 +1949,20 @@ async function buildWeeklyWorkbookBytes(
   return toUint8Array(UZIP.encode(files))
 }
 
-function buildWeeklyWorkbookFilename(semana: string): string {
-  return `${sanitizeFilenamePart(semana)}_ReporteSemanal.xlsx`
+function buildWeeklyWorkbookFilename(input: WeeklyReportExportInput): string {
+  const mode = getWeeklyReportMode(input)
+  const suffix = mode === 'todos' ? '' : `_${getWeeklyReportModeConfig(mode).slug}`
+  return `${sanitizeFilenamePart(input.semana)}${suffix}_ReporteSemanal.xlsx`
 }
 
-function buildWeeklyZipFilename(semana: string): string {
-  return `${sanitizeFilenamePart(semana)}_ReporteSemanal.zip`
+function buildWeeklyZipFilename(input: WeeklyReportExportInput): string {
+  const mode = getWeeklyReportMode(input)
+  const suffix = mode === 'todos' ? '' : `_${getWeeklyReportModeConfig(mode).slug}`
+  return `${sanitizeFilenamePart(input.semana)}${suffix}_ReporteSemanal.zip`
+}
+
+function buildWeeklyCombinedZipFilename(semana: string): string {
+  return `${sanitizeFilenamePart(semana)}_ReportesSemanales.zip`
 }
 
 function buildEvidenceWorkbookFilename(bundle: ServiceEvidenceExportBundle): string {
@@ -1962,6 +2029,64 @@ async function canvasBlobToEmbeddedImage(blob: Blob): Promise<EmbeddedImage> {
   }
 }
 
+function getImageExtensionFromMimeType(mimeType: string | null | undefined): EmbeddedImage['extension'] | null {
+  const normalized = String(mimeType ?? '').toLowerCase().split(';')[0].trim()
+  if (normalized === 'image/jpeg' || normalized === 'image/jpg') return 'jpeg'
+  if (normalized === 'image/png') return 'png'
+  if (normalized === 'image/gif') return 'gif'
+  return null
+}
+
+function getImageExtensionFromFilename(filename: string | null | undefined): EmbeddedImage['extension'] | null {
+  const normalized = String(filename ?? '').toLowerCase()
+  if (/\.(jpe?g)$/i.test(normalized)) return 'jpeg'
+  if (/\.png$/i.test(normalized)) return 'png'
+  if (/\.gif$/i.test(normalized)) return 'gif'
+  return null
+}
+
+function getImageMimeTypeFromFilename(filename: string | null | undefined): string | null {
+  const normalized = String(filename ?? '').toLowerCase()
+  if (/\.(jpe?g)$/i.test(normalized)) return 'image/jpeg'
+  if (/\.png$/i.test(normalized)) return 'image/png'
+  if (/\.gif$/i.test(normalized)) return 'image/gif'
+  if (/\.webp$/i.test(normalized)) return 'image/webp'
+  if (/\.bmp$/i.test(normalized)) return 'image/bmp'
+  if (/\.svg$/i.test(normalized)) return 'image/svg+xml'
+  if (/\.tiff?$/i.test(normalized)) return 'image/tiff'
+  if (/\.hei[cf]$/i.test(normalized)) return 'image/heic'
+  return null
+}
+
+function getDecodableImageBlob(blob: Blob, filename?: string): Blob {
+  const normalizedType = blob.type.toLowerCase().split(';')[0].trim()
+  if (normalizedType.startsWith('image/')) return blob
+
+  const inferredType = getImageMimeTypeFromFilename(filename)
+  if (!inferredType) return blob
+
+  return new Blob([blob], { type: inferredType })
+}
+
+async function originalBlobToEmbeddedImage(
+  blob: Blob,
+  filename?: string,
+): Promise<EmbeddedImage | null> {
+  const extension = getImageExtensionFromMimeType(blob.type)
+    ?? getImageExtensionFromFilename(filename)
+  if (!extension) return null
+
+  const mimeType = extension === 'jpeg'
+    ? 'image/jpeg'
+    : extension === 'png' ? 'image/png' : 'image/gif'
+
+  return {
+    bytes: new Uint8Array(await blob.arrayBuffer()),
+    extension,
+    mimeType,
+  }
+}
+
 async function renderBitmapToJpeg(
   bitmap: ImageBitmap,
   maxLongSidePx: number,
@@ -2022,6 +2147,34 @@ async function renderHtmlImageToJpeg(
   return canvasBlobToEmbeddedImage(convertedBlob)
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  if (typeof FileReader === 'undefined') {
+    throw new Error('Este navegador no soporta lectura de imágenes para exportar a Excel.')
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+        return
+      }
+      reject(new Error('No se pudo leer la imagen para exportar a Excel.'))
+    }
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen para exportar a Excel.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function loadHtmlImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const instance = new Image()
+    instance.onload = () => resolve(instance)
+    instance.onerror = () => reject(new Error('No se pudo decodificar la imagen para Excel.'))
+    instance.src = src
+  })
+}
+
 async function optimizeWithBitmap(
   blob: Blob,
   profile: ImageExportProfile,
@@ -2050,15 +2203,17 @@ async function optimizeWithBitmap(
 async function optimizeWithHtmlImage(
   blob: Blob,
   profile: ImageExportProfile,
+  filename?: string,
 ): Promise<EmbeddedImage> {
-  const objectUrl = URL.createObjectURL(blob)
+  const imageBlob = getDecodableImageBlob(blob, filename)
+  const objectUrl = URL.createObjectURL(imageBlob)
   try {
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const instance = new Image()
-      instance.onload = () => resolve(instance)
-      instance.onerror = () => reject(new Error('No se pudo optimizar la imagen para Excel.'))
-      instance.src = objectUrl
-    })
+    let image: HTMLImageElement
+    try {
+      image = await loadHtmlImage(objectUrl)
+    } catch {
+      image = await loadHtmlImage(await blobToDataUrl(imageBlob))
+    }
 
     let smallestCandidate: EmbeddedImage | null = null
 
@@ -2082,23 +2237,35 @@ async function optimizeWithHtmlImage(
 async function toEmbeddedImage(
   blob: Blob,
   profile: ImageExportProfile,
+  filename?: string,
 ): Promise<EmbeddedImage> {
+  const imageBlob = getDecodableImageBlob(blob, filename)
   // Convertir a JPEG reescalado baja mucho el XLSX y elimina metadata pesada de fotos de celular.
   if (typeof createImageBitmap === 'function' && typeof OffscreenCanvas !== 'undefined') {
     try {
-      return await optimizeWithBitmap(blob, profile)
+      return await optimizeWithBitmap(imageBlob, profile)
     } catch (error) {
       if (typeof document === 'undefined' || typeof Image === 'undefined') {
+        const original = await originalBlobToEmbeddedImage(imageBlob, filename)
+        if (original) return original
         throw error
       }
     }
   }
 
   if (typeof document === 'undefined' || typeof Image === 'undefined') {
+    const original = await originalBlobToEmbeddedImage(imageBlob, filename)
+    if (original) return original
     throw new Error('Este navegador no soporta la conversión requerida para exportar la imagen.')
   }
 
-  return optimizeWithHtmlImage(blob, profile)
+  try {
+    return await optimizeWithHtmlImage(imageBlob, profile, filename)
+  } catch (error) {
+    const original = await originalBlobToEmbeddedImage(imageBlob, filename)
+    if (original) return original
+    throw error
+  }
 }
 
 async function downloadEvidenceAsset(
@@ -2106,15 +2273,8 @@ async function downloadEvidenceAsset(
   profile: ImageExportProfile,
   signal?: AbortSignal,
 ): Promise<EmbeddedImage> {
-  const downloadUrl = evidencia.downloadUrl
-    ?? (await getPresignedGetUrl(evidencia.r2_key, { signal })).downloadUrl
-  const response = await fetch(downloadUrl, { signal })
-  if (!response.ok) {
-    throw new Error(`No se pudo descargar la evidencia "${evidencia.filename}" (${response.status}).`)
-  }
-
-  const blob = await response.blob()
-  return toEmbeddedImage(blob, profile)
+  const blob = await downloadEvidenciaBlob(evidencia.r2_key, { signal })
+  return toEmbeddedImage(blob, profile, evidencia.filename)
 }
 
 async function mapWithConcurrency<T, R>(
@@ -2453,6 +2613,30 @@ export async function buildWeeklyReportBundleFromBundles(
   bundles: ServiceEvidenceExportBundle[],
   options?: BuildWeeklyReportOptions,
 ): Promise<BuildBinaryResult & WeeklyReportExportResult> {
+  const { entries, totalServicios } = await buildWeeklyReportEntriesFromBundles(input, bundles, options)
+
+  const zipBlob = new Blob([toBlobBuffer(toUint8Array(UZIP.encode(entries)))], { type: ZIP_MIME })
+  emitWeeklyReportProgress(
+    options,
+    98,
+    'Empaquetando reporte semanal',
+    'ZIP listo. Preparando descarga...',
+    totalServicios,
+    totalServicios,
+  )
+
+  return {
+    blob: zipBlob,
+    filename: buildWeeklyZipFilename(input),
+    totalServicios,
+  }
+}
+
+async function buildWeeklyReportEntriesFromBundles(
+  input: WeeklyReportExportInput,
+  bundles: ServiceEvidenceExportBundle[],
+  options?: BuildWeeklyReportOptions,
+): Promise<{ entries: Record<string, Uint8Array>; totalServicios: number }> {
   emitWeeklyReportProgress(
     options,
     18,
@@ -2505,7 +2689,7 @@ export async function buildWeeklyReportBundleFromBundles(
     lookups,
     options?.signal,
   )
-  const weeklyWorkbookFilename = buildWeeklyWorkbookFilename(input.semana)
+  const weeklyWorkbookFilename = buildWeeklyWorkbookFilename(input)
   emitWeeklyReportProgress(
     options,
     40,
@@ -2563,19 +2747,8 @@ export async function buildWeeklyReportBundleFromBundles(
   )
   await yieldToBrowser(options?.signal)
 
-  const zipBlob = new Blob([toBlobBuffer(toUint8Array(UZIP.encode(workbookEntries)))], { type: ZIP_MIME })
-  emitWeeklyReportProgress(
-    options,
-    98,
-    'Empaquetando reporte semanal',
-    'ZIP listo. Preparando descarga...',
-    bundles.length,
-    bundles.length,
-  )
-
   return {
-    blob: zipBlob,
-    filename: buildWeeklyZipFilename(input.semana),
+    entries: workbookEntries,
     totalServicios: bundles.length,
   }
 }
@@ -2585,14 +2758,113 @@ export async function buildWeeklyReportBundle(
   options?: BuildWeeklyReportOptions,
 ): Promise<BuildBinaryResult & WeeklyReportExportResult> {
   const bundles = await prepareWeeklyBundlesForWorker(input, options)
+  if (getWeeklyReportMode(input) === 'ambos') {
+    return exportCombinedWeeklyReports(input, bundles, options)
+  }
+
   return buildWeeklyReportBundleFromBundles(input, bundles, options)
 }
 
+async function buildWeeklyReportBinary(
+  input: WeeklyReportExportInput,
+  bundles: ServiceEvidenceExportBundle[],
+  options?: BuildWeeklyReportOptions,
+): Promise<BuildBinaryResult & WeeklyReportExportResult> {
+  if (canUseWeeklyReportWorker()) {
+    try {
+      return await buildWeeklyReportBundleInWorker(input, bundles, options)
+    } catch (error) {
+      if (!isWorkerDomApiUnavailableError(error)) {
+        throw error
+      }
+
+      emitWeeklyReportProgress(
+        options,
+        20,
+        'Generando reporte semanal',
+        'Este navegador no permite procesar XML dentro del worker. Continuando en modo compatible...',
+        0,
+        bundles.length,
+      )
+      await yieldToBrowser(options?.signal)
+    }
+  }
+
+  return buildWeeklyReportBundleFromBundles(input, bundles, options)
+}
+
+async function exportCombinedWeeklyReports(
+  input: WeeklyReportExportInput,
+  bundles: ServiceEvidenceExportBundle[],
+  options?: BuildWeeklyReportOptions,
+): Promise<BuildBinaryResult & WeeklyReportExportResult> {
+  const reportEntries: Record<string, Uint8Array> = {}
+  let totalServicios = 0
+
+  const reportGroups: Array<{ mode: Exclude<WeeklyReportExportMode, 'todos' | 'ambos'>; bundles: ServiceEvidenceExportBundle[] }> = [
+    {
+      mode: 'instalaciones_retiros',
+      bundles: filterBundlesByWeeklyReportMode(bundles, 'instalaciones_retiros'),
+    },
+    {
+      mode: 'mantenimientos',
+      bundles: filterBundlesByWeeklyReportMode(bundles, 'mantenimientos'),
+    },
+  ]
+
+  if (reportGroups.every((group) => group.bundles.length === 0)) {
+    throw new Error(buildNoWeeklyServicesMessage(input))
+  }
+
+  for (let index = 0; index < reportGroups.length; index += 1) {
+    const group = reportGroups[index]
+    if (group.bundles.length === 0) continue
+
+    const scopedInput: WeeklyReportExportInput = {
+      ...input,
+      reportMode: group.mode,
+    }
+    const scopedOptions = withProgressRange(options, index === 0 ? 18 : 56, index === 0 ? 54 : 92)
+
+    emitWeeklyReportProgress(
+      scopedOptions,
+      0,
+      `Generando reporte de ${getWeeklyReportModeConfig(group.mode).label}`,
+      `${group.bundles.length} servicio(s) incluidos.`,
+      0,
+      group.bundles.length,
+    )
+
+    const result = await buildWeeklyReportEntriesFromBundles(scopedInput, group.bundles, scopedOptions)
+    const folderName = getWeeklyReportModeConfig(group.mode).slug
+
+    for (const [filename, bytes] of Object.entries(result.entries)) {
+      reportEntries[`${folderName}/${filename}`] = bytes
+    }
+
+    totalServicios += result.totalServicios
+  }
+
+  emitWeeklyReportProgress(
+    options,
+    94,
+    'Empaquetando reportes semanales',
+    'Comprimiendo ZIP con ambos reportes...',
+    totalServicios,
+    totalServicios,
+  )
+  await yieldToBrowser(options?.signal)
+
+  const blob = new Blob([toBlobBuffer(toUint8Array(UZIP.encode(reportEntries)))], { type: ZIP_MIME })
+  return {
+    blob,
+    filename: buildWeeklyCombinedZipFilename(input.semana),
+    totalServicios,
+  }
+}
+
 function canUseWeeklyReportWorker(): boolean {
-  return typeof Worker !== 'undefined'
-    && typeof URL !== 'undefined'
-    && typeof createImageBitmap === 'function'
-    && typeof OffscreenCanvas !== 'undefined'
+  return false
 }
 
 function isWorkerDomApiUnavailableError(error: unknown): boolean {
@@ -2685,30 +2957,9 @@ export async function exportWeeklyReportBundle(
   options?: BuildWeeklyReportOptions,
 ): Promise<WeeklyReportExportResult> {
   const bundles = await prepareWeeklyBundlesForWorker(input, options)
-  let result: BuildBinaryResult & WeeklyReportExportResult
-
-  if (canUseWeeklyReportWorker()) {
-    try {
-      result = await buildWeeklyReportBundleInWorker(input, bundles, options)
-    } catch (error) {
-      if (!isWorkerDomApiUnavailableError(error)) {
-        throw error
-      }
-
-      emitWeeklyReportProgress(
-        options,
-        20,
-        'Generando reporte semanal',
-        'Este navegador no permite procesar XML dentro del worker. Continuando en modo compatible...',
-        0,
-        bundles.length,
-      )
-      await yieldToBrowser(options?.signal)
-      result = await buildWeeklyReportBundleFromBundles(input, bundles, options)
-    }
-  } else {
-    result = await buildWeeklyReportBundleFromBundles(input, bundles, options)
-  }
+  const result = getWeeklyReportMode(input) === 'ambos'
+    ? await exportCombinedWeeklyReports(input, bundles, options)
+    : await buildWeeklyReportBinary(input, bundles, options)
 
   throwIfAborted(options?.signal)
   emitWeeklyReportProgress(

@@ -56,6 +56,26 @@ function createR2Client(config: R2Config): S3Client {
   })
 }
 
+async function r2BodyToBytes(body: unknown): Promise<Uint8Array> {
+  if (!body) {
+    throw new Response('Objeto R2 sin contenido', { status: 502 })
+  }
+
+  if (body instanceof Uint8Array) return body
+  if (body instanceof ArrayBuffer) return new Uint8Array(body)
+
+  if (typeof body === 'object' && body !== null && 'transformToByteArray' in body) {
+    const transform = (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray
+    if (typeof transform === 'function') return transform.call(body)
+  }
+
+  if (body instanceof ReadableStream) {
+    return new Uint8Array(await new Response(body).arrayBuffer())
+  }
+
+  throw new Response('No se pudo leer el contenido del objeto R2', { status: 502 })
+}
+
 function extractBearerToken(req: Request): string {
   const token = req.headers.get('Authorization')?.replace('Bearer ', '')
   if (!token) {
@@ -101,6 +121,7 @@ Deno.serve(async (req) => {
 
     const payload = await req.json()
     const r2Key = typeof payload?.r2Key === 'string' ? payload.r2Key.trim() : ''
+    const shouldDownload = payload?.download === true
 
     if (!r2Key) {
       return new Response(JSON.stringify({ error: 'r2Key es requerido' }), {
@@ -118,6 +139,19 @@ Deno.serve(async (req) => {
       Bucket: r2Config.bucketName,
       Key: r2Key,
     })
+
+    if (shouldDownload) {
+      const object = await r2Client.send(command)
+      const bytes = await r2BodyToBytes(object.Body)
+
+      return new Response(bytes, {
+        headers: {
+          ...corsHeaders,
+          'Content-Type': object.ContentType ?? 'application/octet-stream',
+          'Cache-Control': 'no-store',
+        },
+      })
+    }
 
     const downloadUrl = await getSignedUrl(r2Client, command, { expiresIn: 60 * 60 })
 

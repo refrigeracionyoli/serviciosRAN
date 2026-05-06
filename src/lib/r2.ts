@@ -87,6 +87,43 @@ async function callEdgeFunction<T>(
   }
 }
 
+async function callEdgeFunctionBlob(
+  functionName: R2FunctionName,
+  body: Record<string, unknown>,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<{ data?: Blob; error?: NormalizedInvokeError }> {
+  const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
+    method: 'POST',
+    signal,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    let detail = ''
+    try {
+      detail = (await response.text()).trim()
+    } catch {
+      detail = ''
+    }
+
+    return {
+      error: {
+        status: response.status,
+        message: `Error HTTP ${response.status}`,
+        detail: detail.length ? detail : `Falló la invocación de ${functionName}.`,
+      },
+    }
+  }
+
+  return { data: await response.blob() }
+}
+
 async function invokeFunctionWithAuthRetry<T>(
   functionName: R2FunctionName,
   body: Record<string, unknown>,
@@ -117,6 +154,60 @@ async function invokeFunctionWithAuthRetry<T>(
     accessToken = await refreshSessionAccessToken()
     const retry = await callEdgeFunction<T>(functionName, body, accessToken, signal)
     if (!retry.error && retry.data != null) {
+      edgeAuthFailureUntil = 0
+      return retry.data
+    }
+
+    const retryNormalized = retry.error ?? {
+      message: `Falló la invocación de ${functionName}`,
+      detail: `No se recibió respuesta válida de ${functionName}.`,
+    }
+
+    if (isAuthLikeFailure(retryNormalized)) {
+      edgeAuthFailureUntil = Date.now() + EDGE_AUTH_COOLDOWN_MS
+      throw new Error('No se pudo validar tu sesión para procesar archivos de evidencia. Cierra sesión e inicia nuevamente.')
+    }
+
+    if (retryNormalized.status === 404) {
+      throw new Error(getFunctionErrorMessage(functionName, retryNormalized.detail))
+    }
+
+    throw new Error(`Error al invocar ${functionName}: ${retryNormalized.detail}`)
+  }
+
+  throw new Error(`Error al invocar ${functionName}: ${normalized.detail}`)
+}
+
+async function invokeBlobFunctionWithAuthRetry(
+  functionName: R2FunctionName,
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  if (Date.now() < edgeAuthFailureUntil) {
+    throw new Error('Tu sesión no pudo validarse con el servidor. Cierra sesión e inicia nuevamente.')
+  }
+
+  let accessToken = await getSessionAccessToken()
+  const { data, error } = await callEdgeFunctionBlob(functionName, body, accessToken, signal)
+
+  if (!error && data) {
+    edgeAuthFailureUntil = 0
+    return data
+  }
+
+  const normalized = error ?? {
+    message: `Falló la invocación de ${functionName}`,
+    detail: `No se recibió respuesta válida de ${functionName}.`,
+  }
+
+  if (normalized.status === 404) {
+    throw new Error(getFunctionErrorMessage(functionName, normalized.detail))
+  }
+
+  if (isAuthLikeFailure(normalized)) {
+    accessToken = await refreshSessionAccessToken()
+    const retry = await callEdgeFunctionBlob(functionName, body, accessToken, signal)
+    if (!retry.error && retry.data) {
       edgeAuthFailureUntil = 0
       return retry.data
     }
@@ -200,6 +291,16 @@ export async function getPresignedGetUrl(
     }
     throw new Error(getFunctionErrorMessage('r2-presigned-get'))
   }
+}
+
+export async function downloadEvidenciaBlob(
+  r2Key: string,
+  options?: { signal?: AbortSignal },
+): Promise<Blob> {
+  return invokeBlobFunctionWithAuthRetry('r2-presigned-get', {
+    r2Key,
+    download: true,
+  }, options?.signal)
 }
 
 /**

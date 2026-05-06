@@ -46,7 +46,7 @@ import { useServiciosQuery } from '@/hooks/use-servicios'
 import { useToast } from '@/hooks/use-toast'
 import { useFiltrosStore } from '@/stores/filtros.store'
 import { formatDate, formatMXN, formatWeek } from '@/lib/utils'
-import type { WeeklyReportProgress } from '@/lib/reportes-export'
+import type { WeeklyReportExportMode, WeeklyReportProgress } from '@/lib/reportes-export'
 import type { ClaseOrden, Servicio, ServicioStatus, TipoServicio } from '@/types/domain.types'
 
 const PAGE_SIZE = 10
@@ -605,7 +605,7 @@ export function ServiciosPage() {
     weeklyExportAbortRef.current?.abort()
   }
 
-  const handleExportWeeklyReport = async () => {
+  const handleExportWeeklyReport = async (reportMode: WeeklyReportExportMode) => {
     if (isExportingWeekly) return
 
     setIsExportingWeekly(true)
@@ -625,6 +625,7 @@ export function ServiciosPage() {
         semana,
         fechaInicio: weekRange.inicio,
         fechaFin: weekRange.fin,
+        reportMode,
         tecnicoId: filtros.tecnicoId,
         clienteId: filtros.clienteId,
         tipoServicios: tipoFilters,
@@ -706,11 +707,29 @@ export function ServiciosPage() {
                 </div>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={handleExportWeeklyReport} disabled={isExportingWeekly}>
+              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportWeeklyReport('instalaciones_retiros')} disabled={isExportingWeekly}>
                 <CalendarDays className="h-4 w-4 text-ran-navy" />
                 <div>
                   <p className="font-semibold text-ran-navy">
-                    {isExportingWeekly ? 'Generando reporte semanal...' : 'Reporte semanal + evidencias'}
+                    {isExportingWeekly ? 'Generando reporte semanal...' : 'Reporte instalaciones/retiros'}
+                  </p>
+                  <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportWeeklyReport('mantenimientos')} disabled={isExportingWeekly}>
+                <CalendarDays className="h-4 w-4 text-ran-navy" />
+                <div>
+                  <p className="font-semibold text-ran-navy">
+                    {isExportingWeekly ? 'Generando reporte semanal...' : 'Reporte mantenimientos'}
+                  </p>
+                  <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportWeeklyReport('ambos')} disabled={isExportingWeekly}>
+                <CalendarDays className="h-4 w-4 text-ran-navy" />
+                <div>
+                  <p className="font-semibold text-ran-navy">
+                    {isExportingWeekly ? 'Generando reporte semanal...' : 'Ambos reportes en ZIP'}
                   </p>
                   <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
                 </div>
