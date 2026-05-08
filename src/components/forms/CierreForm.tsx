@@ -28,6 +28,7 @@ interface Props {
   defaultTecnicoId?: string | null
   defaultCostoTotal?: number | null
   defaultFechaCierre?: string | null
+  defaultDescripcion?: string | null
   cierre?: Cierre | null
   submitLabel?: string
   loadingLabel?: string
@@ -57,6 +58,7 @@ export function CierreForm({
   defaultTecnicoId,
   defaultCostoTotal,
   defaultFechaCierre,
+  defaultDescripcion,
   cierre,
   submitLabel = 'Cerrar servicio',
   loadingLabel = 'Cerrando servicio...',
@@ -88,7 +90,7 @@ export function CierreForm({
       aviso: defaultAviso ?? undefined,
       parte_objeto: cierre?.parte_objeto ?? undefined,
       causa: cierre?.causa ?? undefined,
-      descripcion: cierre?.descripcion ?? '',
+      descripcion: cierre?.descripcion ?? defaultDescripcion ?? '',
       tecnico_id: defaultTecnicoId ?? undefined,
       costo_total: defaultCostoTotal ?? undefined,
       fecha_cierre: defaultFechaCierre && defaultFechaCierre <= todayIso
@@ -112,9 +114,9 @@ export function CierreForm({
   useEffect(() => {
     setValue('parte_objeto', cierre?.parte_objeto ?? null)
     setValue('causa', cierre?.causa ?? null)
-    setValue('descripcion', cierre?.descripcion ?? '')
+    setValue('descripcion', cierre?.descripcion ?? defaultDescripcion ?? '')
     setValue('firma_receptor', cierre?.firma_receptor ?? null)
-  }, [cierre, setValue])
+  }, [cierre, defaultDescripcion, setValue])
 
   useEffect(() => {
     if (defaultTecnicoId) {

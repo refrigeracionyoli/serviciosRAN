@@ -190,7 +190,7 @@ async function loadServicioEvidenciasSnapshot(ownerId: string, serviceId: number
   }
 }
 
-function writeServicioToQueryCache(queryClient: QueryClient, servicio: Servicio) {
+export function writeServicioToQueryCache(queryClient: QueryClient, servicio: Servicio) {
   queryClient.setQueryData(serviciosKeys.detail(servicio.id), servicio)
 
   const existingListQueries = queryClient.getQueriesData<Servicio[]>({ queryKey: ['servicios', 'list'] })
@@ -210,6 +210,46 @@ function writeServicioToQueryCache(queryClient: QueryClient, servicio: Servicio)
   if (!updatedAnyList) {
     queryClient.setQueryData(serviciosKeys.list(), [servicio])
   }
+}
+
+export async function refreshServicioInQueryCache(queryClient: QueryClient, serviceId: number) {
+  const ownerId = await getCurrentSessionUserId()
+  if (!ownerId) return
+
+  let servicio: Servicio | null = null
+
+  if (isBrowserOnline() && !isLocalNumberId(serviceId)) {
+    try {
+      const { data, error } = await supabase
+        .from('servicios')
+        .select(SELECT_SERVICIO)
+        .eq('id', serviceId)
+        .single()
+
+      if (error) throw error
+      servicio = data as Servicio
+      await upsertCachedServicio(ownerId, servicio)
+    } catch (error) {
+      if (!isLikelyNetworkError(error)) throw error
+    }
+  }
+
+  if (!servicio) {
+    servicio = await getCachedServicioDetalleSnapshot(ownerId, serviceId)
+  }
+
+  if (servicio) {
+    writeServicioToQueryCache(queryClient, servicio)
+  }
+}
+
+async function invalidateActiveServicioQueries(queryClient: QueryClient, serviceId?: number) {
+  await Promise.all([
+    typeof serviceId === 'number'
+      ? queryClient.invalidateQueries({ queryKey: serviciosKeys.detail(serviceId), refetchType: 'active' })
+      : Promise.resolve(),
+    queryClient.invalidateQueries({ queryKey: serviciosKeys.all, refetchType: 'active' }),
+  ])
 }
 
 function normalizeRefaccionInventorySource(
@@ -415,7 +455,7 @@ export function useCrearServicioMutation() {
         await upsertCachedServicio(ownerId, created)
       }
       writeServicioToQueryCache(qc, created)
-      await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+      await invalidateActiveServicioQueries(qc, created.id)
     },
   })
 }
@@ -445,7 +485,8 @@ export function useEditarServicioMutation(id: number) {
         await upsertCachedServicio(ownerId, updated)
       }
       writeServicioToQueryCache(qc, updated)
-      await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+      await refreshServicioInQueryCache(qc, updated.id)
+      await invalidateActiveServicioQueries(qc, updated.id)
       await qc.invalidateQueries({ queryKey: maquinasKeys.all })
       await qc.invalidateQueries({ queryKey: maquinasTallerKeys.all })
     },
@@ -508,9 +549,9 @@ export function useGuardarServicioRefaccionesMutation(serviceId: number) {
       return queueServicioReplaceRefacciones(ownerId, serviceId, normalizedItems)
     },
     onSuccess: async () => {
+      await refreshServicioInQueryCache(qc, serviceId)
       await qc.invalidateQueries({ queryKey: serviciosKeys.refacciones(serviceId) })
-      await qc.invalidateQueries({ queryKey: serviciosKeys.detail(serviceId) })
-      await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+      await invalidateActiveServicioQueries(qc, serviceId)
       await qc.invalidateQueries({ queryKey: inventarioKeys.all })
       await qc.invalidateQueries({ queryKey: inventarioKeys.tecnicoRoot })
       await qc.invalidateQueries({ queryKey: inventarioKeys.movimientosRoot })
@@ -564,9 +605,9 @@ export function useGuardarServicioRefaccionesTecnicoMutation(
       }
     },
     onSuccess: async () => {
+      await refreshServicioInQueryCache(qc, serviceId)
       await qc.invalidateQueries({ queryKey: serviciosKeys.refacciones(serviceId) })
-      await qc.invalidateQueries({ queryKey: serviciosKeys.detail(serviceId) })
-      await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+      await invalidateActiveServicioQueries(qc, serviceId)
       await qc.invalidateQueries({ queryKey: inventarioKeys.tecnicoRoot })
     },
   })
@@ -624,8 +665,8 @@ export function useCompletarServicioConRefaccionesMutation() {
       }
     },
     onSuccess: async (_result, variables) => {
-      await qc.invalidateQueries({ queryKey: serviciosKeys.detail(variables.serviceId) })
-      await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+      await refreshServicioInQueryCache(qc, variables.serviceId)
+      await invalidateActiveServicioQueries(qc, variables.serviceId)
     },
   })
 }

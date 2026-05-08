@@ -545,6 +545,7 @@ export function ServicioEditarPage() {
                 ?? draftCostoTotal
               }
               defaultFechaCierre={cierreDefaults?.fechaCierre ?? getDefaultFechaCierre(servicio)}
+              defaultDescripcion={servicio.descripcion}
               cierre={cierre}
               onSubmit={handleCerrar}
               onDraftChange={() => setCierreDraft(true)}

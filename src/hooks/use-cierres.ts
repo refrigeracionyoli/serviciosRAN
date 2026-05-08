@@ -18,7 +18,7 @@ import { buildServicioCompletionRequirementMessage, summarizeServicioEvidencias 
 import { formatLocalIsoDate } from '@/lib/utils'
 import type { Cierre, Evidencia, Servicio } from '@/types/domain.types'
 import type { CierreInput } from '@/schemas/cliente.schema'
-import { serviciosKeys } from './use-servicios'
+import { refreshServicioInQueryCache, serviciosKeys } from './use-servicios'
 
 export const cierresKeys = {
   all: ['cierres'] as const,
@@ -282,10 +282,13 @@ export function useCerrarServicioMutation(servicioId: number) {
       if (ownerId) {
         await upsertCachedCierres(ownerId, [cierre])
       }
-      void qc.invalidateQueries({ queryKey: serviciosKeys.detail(servicioId) })
-      void qc.invalidateQueries({ queryKey: serviciosKeys.all })
-      void qc.invalidateQueries({ queryKey: cierresKeys.byServicio(servicioId) })
-      void qc.invalidateQueries({ queryKey: cierresKeys.catalog() })
+      await refreshServicioInQueryCache(qc, servicioId)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: serviciosKeys.detail(servicioId), refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: serviciosKeys.all, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: cierresKeys.byServicio(servicioId), refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: cierresKeys.catalog(), refetchType: 'active' }),
+      ])
     },
   })
 }
