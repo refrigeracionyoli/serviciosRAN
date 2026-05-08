@@ -33,6 +33,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        cleanupOutdatedCaches: true,
         globPatterns: [
           '**/*.{css,html,ico,svg,woff2}',
           'registerSW.js',

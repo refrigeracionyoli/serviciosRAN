@@ -41,6 +41,7 @@ describe('security contracts', () => {
   it('keeps production security headers in Vercel config', () => {
     const vercelConfig = JSON.parse(readRepoFile('vercel.json')) as {
       headers: Array<{ headers: Array<{ key: string; value: string }> }>
+      rewrites?: Array<{ source: string; destination: string }>
     }
     const headers = new Map(vercelConfig.headers.flatMap((entry) => entry.headers.map((header) => [header.key, header.value])))
 
@@ -49,6 +50,8 @@ describe('security contracts', () => {
     expect(headers.get('Strict-Transport-Security')).toContain('max-age=31536000')
     expect(headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'")
     expect(headers.get('Content-Security-Policy')).toContain("object-src 'none'")
+    expect(JSON.stringify(vercelConfig.rewrites)).not.toContain('/(.*)')
+    expect(vercelConfig.rewrites?.[0]?.source).toContain('(?!.*\\.[^/]+$)')
   })
 
   it('requires dynamic CORS origins in Edge Function responses', () => {
