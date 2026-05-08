@@ -650,10 +650,11 @@ export function DashboardPage() {
     [inventario],
   )
 
-  const serviciosPendientes = useMemo(
+  const serviciosPendientesAbiertos = useMemo(
     () => serviciosPendientesRows.length,
     [serviciosPendientesRows],
   )
+  const serviciosPendientesPeriodo = statusCounts.pendiente
 
   const handleCancelWeeklyExport = () => {
     weeklyExportAbortRef.current?.abort()
@@ -785,13 +786,20 @@ export function DashboardPage() {
       <div className="space-y-4 px-6 pt-5">
 
         {/* ── KPI Row ───────────────────────────────────────────── */}
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <KpiCard
             title={`Servicios (${rangeLabel})`}
             value={totalPeriodo}
             subtitle="Total en el periodo seleccionado"
             badgeLabel="Periodo"
             tone="navy"
+          />
+          <KpiCard
+            title="Servicios pendientes"
+            value={serviciosPendientesPeriodo}
+            subtitle={`Pendientes en ${rangeLabel}`}
+            badgeLabel="Pendientes"
+            tone="amber"
           />
           <KpiCard
             title="Cumplimiento"
@@ -1118,7 +1126,7 @@ export function DashboardPage() {
                 <div className="flex items-center justify-between rounded-lg border border-orange-100 bg-orange-50/60 px-3 py-2 text-sm">
                   <p className="font-semibold text-ran-navy">Pendientes por atender</p>
                   <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[11px] font-bold text-orange-700">
-                    {serviciosPendientes}
+                    {serviciosPendientesAbiertos}
                   </span>
                 </div>
               </div>
