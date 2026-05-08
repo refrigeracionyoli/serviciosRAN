@@ -26,7 +26,7 @@ import { useEvidenciasQuery } from '@/hooks/use-evidencias'
 import { useInventarioTecnicoQuery } from '@/hooks/use-inventario'
 import { useToast } from '@/hooks/use-toast'
 import { formatLocalIsoDate } from '@/lib/utils'
-import { buildServicioCompletionRequirementMessage, summarizeServicioEvidencias } from '@/lib/tecnico/servicio-evidencias'
+import { summarizeServicioEvidencias } from '@/lib/tecnico/servicio-evidencias'
 import type { RefaccionInput } from '@/schemas/inventario.schema'
 import type { CierreInput } from '@/schemas/cliente.schema'
 import type { CrearServicioInput } from '@/schemas/servicio.schema'
@@ -132,7 +132,9 @@ export function ServicioEditarPage() {
     mutateAsync: editarServicioAsync,
     isPending,
   } = useEditarServicioMutation(servicioId)
-  const { mutateAsync: cerrarServicioAsync, isPending: cerrando } = useCerrarServicioMutation(servicioId)
+  const { mutateAsync: cerrarServicioAsync, isPending: cerrando } = useCerrarServicioMutation(servicioId, {
+    requireEvidenceBeforeClose: false,
+  })
   const { data: refaccionesData, isLoading: loadingRefacciones } = useServicioRefaccionesQuery(servicioId)
   const { mutateAsync: guardarRefaccionesAsync, isPending: savingRefacciones } = useGuardarServicioRefaccionesMutation(servicioId)
   const { data: inventarioTecnicoServicio = [] } = useInventarioTecnicoQuery(
@@ -291,18 +293,13 @@ export function ServicioEditarPage() {
   if (!servicio) return <div className="p-6">Servicio no encontrado</div>
 
   const evidenciasSummary = summarizeServicioEvidencias(evidencias)
-  const canClose = (
-    statusEdit === 'completado'
-    && !cierre
-    && !loadingEvidencias
-    && evidenciasSummary.puedeCompletar
-  )
-  const cierreHelpText = loadingEvidencias
-    ? 'Validando evidencias del servicio antes de permitir el cierre.'
-    : statusEdit !== 'completado'
-      ? 'Mantén el status en "Completado" para poder cerrar el servicio.'
+  const canClose = statusEdit === 'completado' && !cierre
+  const cierreHelpText = statusEdit !== 'completado'
+    ? 'Mantén el status en "Completado" para poder cerrar el servicio.'
+    : loadingEvidencias
+      ? 'Puedes capturar el cierre administrativo aunque las evidencias sigan cargando.'
       : !evidenciasSummary.puedeCompletar
-        ? `Antes de cerrar el servicio: ${buildServicioCompletionRequirementMessage(evidenciasSummary)}`
+        ? 'Puedes capturar el cierre administrativo sin evidencias. Cuando el técnico entregue fotos y orden de servicio, agrégalas para completar el expediente.'
         : 'Completa el formulario de cierre y da clic en "Cerrar servicio".'
 
   const buildCierreUpdateInput = (
@@ -515,6 +512,7 @@ export function ServicioEditarPage() {
           cierreHelpText={cierreHelpText}
           requireTecnicoParaEnRuta={statusEdit === 'en_ruta'}
           requireFechaServicioParaCompletar={statusEdit === 'completado'}
+          allowClosedServiceEvidenceChanges
           onDraftChange={setFormDraft}
           onBeforeOpenCierre={handleBeforeOpenCierre}
           refaccionesContent={

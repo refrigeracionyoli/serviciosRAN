@@ -26,6 +26,17 @@ export const cierresKeys = {
   byServicio: (servicioId: number) => ['cierres', 'servicio', servicioId] as const,
 }
 
+export interface CerrarServicioMutationOptions {
+  requireEvidenceBeforeClose?: boolean
+}
+
+export function shouldValidateEvidenciasBeforeClose(
+  existingCierre: Cierre | null | undefined,
+  options: CerrarServicioMutationOptions = {},
+): boolean {
+  return !existingCierre && (options.requireEvidenceBeforeClose ?? true)
+}
+
 async function getServicioEvidenciasForCloseValidation(ownerId: string, servicioId: number) {
   const shouldUseLocalOnly = isLocalNumberId(servicioId) || await hasBlockingRemoteFetchCommands(
     ownerId,
@@ -208,7 +219,10 @@ export function useCierresCatalogoQuery() {
   })
 }
 
-export function useCerrarServicioMutation(servicioId: number) {
+export function useCerrarServicioMutation(
+  servicioId: number,
+  options: CerrarServicioMutationOptions = {},
+) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (data: CierreInput) => {
@@ -220,7 +234,7 @@ export function useCerrarServicioMutation(servicioId: number) {
       if (isBrowserOnline() && !isLocalNumberId(servicioId)) {
         try {
           const existing = await findRemoteCierreByServicioId(servicioId)
-          if (!existing) {
+          if (shouldValidateEvidenciasBeforeClose(existing, options)) {
             await assertServicioCanBeClosed(ownerId, servicioId)
           }
 
@@ -273,7 +287,9 @@ export function useCerrarServicioMutation(servicioId: number) {
         }
       }
 
-      await assertServicioCanBeClosed(ownerId, servicioId)
+      if (shouldValidateEvidenciasBeforeClose(null, options)) {
+        await assertServicioCanBeClosed(ownerId, servicioId)
+      }
       const cierreInput = await withComputedCostoTotal(ownerId, servicioId, data)
       return queueServicioClose(ownerId, servicioId, cierreInput)
     },

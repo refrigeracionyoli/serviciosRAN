@@ -22,7 +22,7 @@ import { withOfflineFallback } from '@/lib/offline/query-fallback'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
 import { getCurrentSessionUser } from '@/lib/offline/session'
 import { settleQueuedCommand } from '@/lib/offline/sync-engine'
-import type { Evidencia } from '@/types/domain.types'
+import type { Evidencia, ServicioStatus } from '@/types/domain.types'
 
 interface PerfilCompresion {
   objetivoMB: number
@@ -56,6 +56,17 @@ export interface QueuedEvidenceResult {
 
 interface DeleteEvidenciaContext {
   previousEvidencias?: Evidencia[]
+}
+
+export interface EvidenciaMutationOptions {
+  allowClosedServiceChanges?: boolean
+}
+
+export function canChangeEvidenciasForServicioStatus(
+  status: ServicioStatus | null | undefined,
+  options: EvidenciaMutationOptions = {},
+): boolean {
+  return status !== 'cerrado' || options.allowClosedServiceChanges === true
 }
 
 function isOrdenServicioUpload(filename: string): boolean {
@@ -133,9 +144,13 @@ async function doesRemoteEvidenceExist(evidenciaId: number): Promise<boolean | n
   return Boolean(data)
 }
 
-async function assertServicioAllowsEvidenceChanges(ownerId: string, servicioId: number) {
+async function assertServicioAllowsEvidenceChanges(
+  ownerId: string,
+  servicioId: number,
+  options: EvidenciaMutationOptions = {},
+) {
   const servicio = await getCachedServicioDetalleSnapshot(ownerId, servicioId)
-  if (servicio?.status === 'cerrado') {
+  if (!canChangeEvidenciasForServicioStatus(servicio?.status, options)) {
     throw new Error('Este servicio ya fue cerrado y sus evidencias quedaron bloqueadas.')
   }
 }
@@ -179,7 +194,10 @@ export function useEvidenciasQuery(servicioId: number, enabled = true) {
   })
 }
 
-export function useSubirEvidenciaMutation(servicioId: number) {
+export function useSubirEvidenciaMutation(
+  servicioId: number,
+  options: EvidenciaMutationOptions = {},
+) {
   const queryClient = useQueryClient()
 
   return useMutation({
@@ -193,7 +211,7 @@ export function useSubirEvidenciaMutation(servicioId: number) {
         throw new Error('Guarda primero el servicio antes de cargar evidencias.')
       }
 
-      await assertServicioAllowsEvidenceChanges(currentUser.id, servicioId)
+      await assertServicioAllowsEvidenceChanges(currentUser.id, servicioId, options)
 
       const uploadFile = await comprimirParaR2(file, isOrdenServicioUpload(file.name))
       const command = await queueServiceAddEvidenciaCommand(currentUser.id, {
@@ -218,7 +236,10 @@ export function useSubirEvidenciaMutation(servicioId: number) {
   })
 }
 
-export function useEliminarEvidenciaMutation(servicioId: number) {
+export function useEliminarEvidenciaMutation(
+  servicioId: number,
+  options: EvidenciaMutationOptions = {},
+) {
   const queryClient = useQueryClient()
   const { user, perfil } = useAuth()
 
@@ -240,7 +261,7 @@ export function useEliminarEvidenciaMutation(servicioId: number) {
         throw new Error('No hay sesión activa para eliminar la evidencia.')
       }
 
-      await assertServicioAllowsEvidenceChanges(user.id, servicioId)
+      await assertServicioAllowsEvidenceChanges(user.id, servicioId, options)
 
       if (evidenciaId < 0) {
         const commandId = await removePendingLocalEvidencia(user.id, evidenciaId)

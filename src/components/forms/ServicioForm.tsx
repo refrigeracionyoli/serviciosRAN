@@ -68,6 +68,7 @@ interface Props {
   showSubmitButton?: boolean
   requireTecnicoParaEnRuta?: boolean
   requireFechaServicioParaCompletar?: boolean
+  allowClosedServiceEvidenceChanges?: boolean
 }
 
 function sanitizeFilename(filename: string): string {
@@ -317,6 +318,7 @@ export function ServicioForm({
   showSubmitButton = true,
   requireTecnicoParaEnRuta = false,
   requireFechaServicioParaCompletar = false,
+  allowClosedServiceEvidenceChanges = false,
 }: Props) {
   const [openClienteModal, setOpenClienteModal] = useState(false)
   const [openMaquinaModal, setOpenMaquinaModal] = useState(false)
@@ -398,8 +400,12 @@ export function ServicioForm({
   const { mutateAsync: descartarMaquinaPendienteInstalacion } = useDescartarMaquinaPendienteInstalacionMutation()
   const servicioId = servicio?.id ?? 0
   const { data: evidencias = [], isLoading: loadingEvidencias } = useEvidenciasQuery(servicioId, Boolean(servicio?.id))
-  const { mutateAsync: subirEvidenciaAsync, isPending: subiendoEvidencia } = useSubirEvidenciaMutation(servicioId)
-  const { mutateAsync: eliminarEvidenciaAsync, isPending: eliminandoEvidencia } = useEliminarEvidenciaMutation(servicioId)
+  const { mutateAsync: subirEvidenciaAsync, isPending: subiendoEvidencia } = useSubirEvidenciaMutation(servicioId, {
+    allowClosedServiceChanges: allowClosedServiceEvidenceChanges,
+  })
+  const { mutateAsync: eliminarEvidenciaAsync, isPending: eliminandoEvidencia } = useEliminarEvidenciaMutation(servicioId, {
+    allowClosedServiceChanges: allowClosedServiceEvidenceChanges,
+  })
 
   const clienteModalForm = useForm<CrearClienteInput>({
     resolver: zodResolver(crearClienteSchema),
@@ -1353,7 +1359,7 @@ export function ServicioForm({
                   }`}
                 >
                   {canShowCierre && cierreContent
-                    ? 'Completa el formulario de cierre y da clic en "Cerrar servicio".'
+                    ? cierreHelpText ?? 'Completa el formulario de cierre y da clic en "Cerrar servicio".'
                     : cierreHelpText ?? 'Cambia el status a "Completado" para poder cerrar el servicio.'}
                 </div>
               </div>
