@@ -10,6 +10,9 @@ verify_jwt = false
 [functions.r2-delete]
 verify_jwt = false
 
+[functions.admin-delete-servicio]
+verify_jwt = false
+
 [functions.admin-create-tecnico]
 verify_jwt = false
 

@@ -73,6 +73,7 @@ describe('security contracts', () => {
   it('keeps privileged Edge Functions behind role checks', () => {
     const adminCreate = readRepoFile('supabase/functions/admin-create-tecnico/index.ts')
     const adminReset = readRepoFile('supabase/functions/admin-reset-empleado-password/index.ts')
+    const adminDeleteServicio = readRepoFile('supabase/functions/admin-delete-servicio/index.ts')
     const r2Functions = [
       'supabase/functions/r2-upload/index.ts',
       'supabase/functions/r2-presigned-put/index.ts',
@@ -82,6 +83,8 @@ describe('security contracts', () => {
 
     expect(adminCreate).toContain("requireRole(req, 'admin')")
     expect(adminReset).toContain("requireRole(req, 'admin')")
+    expect(adminDeleteServicio).toContain("await requireRole(req, 'admin')")
+    expect(adminDeleteServicio).toContain('delete_servicio_completo')
 
     for (const source of r2Functions) {
       expect(source).toContain("requireAnyRole(req, ['admin', 'tecnico'])")

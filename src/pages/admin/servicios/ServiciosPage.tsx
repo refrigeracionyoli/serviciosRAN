@@ -16,9 +16,11 @@ import {
   Pencil,
   Plus,
   Search,
+  Trash2,
   X,
 } from 'lucide-react'
 import { AdminFilterBarSkeleton, AdminTableSkeleton } from '@/components/shared/AdminSkeletons'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { DateRangePickerInput } from '@/components/shared/DateRangePickerInput'
 import { HorizontalScrollArea } from '@/components/shared/HorizontalScrollArea'
 import { ServicioStatusBadge } from '@/components/shared/StatusBadge'
@@ -42,7 +44,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useServiciosQuery } from '@/hooks/use-servicios'
+import { useEliminarServicioMutation, useServiciosQuery } from '@/hooks/use-servicios'
 import { useToast } from '@/hooks/use-toast'
 import { useFiltrosStore } from '@/stores/filtros.store'
 import { formatDate, formatMXN, formatWeek } from '@/lib/utils'
@@ -334,10 +336,12 @@ export function ServiciosPage() {
   const [claseFilters, setClaseFilters] = useState<ClaseOrden[]>([])
   const [dateFilterField, setDateFilterField] = useState<DateFilterField>('actividad')
   const [sortState, setSortState] = useState<ServicioSortState | null>(null)
+  const [servicioAEliminar, setServicioAEliminar] = useState<Servicio | null>(null)
   const weeklyReportWeekOptions = useMemo(() => buildWeeklyReportWeekOptions(todayIso), [todayIso])
   const weeklyReportLabel = getWeeklyReportLabel(weeklyReportWeekStart)
 
   const { data: servicios = [], isLoading } = useServiciosQuery()
+  const { mutateAsync: eliminarServicioAsync, isPending: eliminandoServicio } = useEliminarServicioMutation()
   const isPageLoading = isLoading
 
   const tipoServicioOptions = useMemo<Array<{ value: TipoServicio; label: string }>>(() => {
@@ -603,6 +607,27 @@ export function ServiciosPage() {
 
   const handleCancelWeeklyExport = () => {
     weeklyExportAbortRef.current?.abort()
+  }
+
+  const handleConfirmEliminarServicio = async () => {
+    if (!servicioAEliminar) return
+
+    try {
+      const servicio = servicioAEliminar
+      const result = await eliminarServicioAsync(servicio.id)
+      setServicioAEliminar(null)
+      toast({
+        title: 'Servicio eliminado',
+        description: `Se eliminó el servicio ${servicio.orden ? `#${servicio.orden}` : `#${servicio.id}`} con ${result.evidenciasDeleted} evidencia(s) y ${result.refaccionesDeleted} refacción(es).`,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo eliminar el servicio.'
+      toast({
+        title: 'Error al eliminar servicio',
+        description: message,
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleExportWeeklyReport = async (reportMode: WeeklyReportExportMode) => {
@@ -987,6 +1012,14 @@ export function ServiciosPage() {
                               <Pencil className="h-4 w-4" />
                               Editar
                             </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="cursor-pointer text-destructive focus:text-destructive"
+                              onClick={() => setServicioAEliminar(servicio)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Eliminar
+                            </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </td>
@@ -1031,6 +1064,25 @@ export function ServiciosPage() {
         completedServices={weeklyExportProgress?.completedServices ?? 0}
         totalServices={weeklyExportProgress?.totalServices ?? 0}
         onCancel={handleCancelWeeklyExport}
+      />
+      <ConfirmDialog
+        open={Boolean(servicioAEliminar)}
+        onOpenChange={(open) => {
+          if (!open) setServicioAEliminar(null)
+        }}
+        title="¿Eliminar servicio?"
+        description={
+          servicioAEliminar
+            ? `Se eliminará el servicio ${servicioAEliminar.orden ? `#${servicioAEliminar.orden}` : `#${servicioAEliminar.id}`}, junto con su cierre, evidencias e imágenes, y refacciones asignadas. Esta acción no se puede deshacer.`
+            : 'Se eliminará el servicio seleccionado. Esta acción no se puede deshacer.'
+        }
+        confirmLabel="Eliminar servicio"
+        cancelLabel="Cancelar"
+        variant="destructive"
+        isLoading={eliminandoServicio}
+        onConfirm={() => {
+          void handleConfirmEliminarServicio()
+        }}
       />
     </div>
   )

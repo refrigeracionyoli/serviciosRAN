@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/hooks/use-auth'
+import { deleteServicioCompleto } from '@/lib/r2'
 import {
   hasBlockingRemoteFetchCommands,
   queueServiceCompletionCommand,
@@ -24,6 +25,7 @@ import {
   getCachedServicioRefaccionesSnapshot,
   getCachedServiciosSnapshot,
   isLocalNumberId,
+  removeCachedServicio,
   replaceCachedServiciosListSnapshot,
   replaceCachedEvidenciasForServicio,
   upsertCachedServicio,
@@ -209,6 +211,16 @@ export function writeServicioToQueryCache(queryClient: QueryClient, servicio: Se
 
   if (!updatedAnyList) {
     queryClient.setQueryData(serviciosKeys.list(), [servicio])
+  }
+}
+
+function removeServicioFromQueryCache(queryClient: QueryClient, serviceId: number) {
+  queryClient.removeQueries({ queryKey: serviciosKeys.detail(serviceId), exact: true })
+
+  const existingListQueries = queryClient.getQueriesData<Servicio[]>({ queryKey: ['servicios', 'list'] })
+  for (const [queryKey, rows] of existingListQueries) {
+    if (!Array.isArray(rows)) continue
+    queryClient.setQueryData(queryKey, rows.filter((servicio) => servicio.id !== serviceId))
   }
 }
 
@@ -489,6 +501,43 @@ export function useEditarServicioMutation(id: number) {
       await invalidateActiveServicioQueries(qc, updated.id)
       await qc.invalidateQueries({ queryKey: maquinasKeys.all })
       await qc.invalidateQueries({ queryKey: maquinasTallerKeys.all })
+    },
+  })
+}
+
+export function useEliminarServicioMutation() {
+  const qc = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (serviceId: number) => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) {
+        throw new Error('No hay sesión activa para eliminar el servicio.')
+      }
+
+      if (!isBrowserOnline() || isLocalNumberId(serviceId)) {
+        throw new Error('No se puede eliminar un servicio sin conexión. Inténtalo nuevamente cuando tengas internet.')
+      }
+
+      return deleteServicioCompleto(serviceId)
+    },
+    onSuccess: async (_result, serviceId) => {
+      const ownerId = await getCurrentSessionUserId()
+      if (ownerId) {
+        await removeCachedServicio(ownerId, serviceId)
+      }
+
+      removeServicioFromQueryCache(qc, serviceId)
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: serviciosKeys.all, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: ['evidencias'], refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: ['cierres'], refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: ['servicio-refacciones'], refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: inventarioKeys.all, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: inventarioKeys.tecnicoRoot, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: inventarioKeys.movimientosRoot, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: maquinasTallerKeys.all, refetchType: 'active' }),
+      ])
     },
   })
 }

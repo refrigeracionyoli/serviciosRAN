@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import { getFreshAccessToken } from './edge-auth'
 
-type R2FunctionName = 'r2-presigned-put' | 'r2-presigned-get' | 'r2-delete'
+type R2FunctionName = 'r2-presigned-put' | 'r2-presigned-get' | 'r2-delete' | 'admin-delete-servicio'
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
 const EDGE_AUTH_COOLDOWN_MS = 8_000
@@ -234,7 +234,7 @@ async function invokeBlobFunctionWithAuthRetry(
 
 function getFunctionErrorMessage(functionName: string, responseText?: string): string {
   const base = `La Edge Function "${functionName}" no está disponible en este proyecto de Supabase.`
-  const deployHint = 'Despliega las funciones de R2 en Supabase (r2-upload, r2-presigned-get y r2-delete) y verifica los secrets de R2.'
+  const deployHint = 'Despliega las Edge Functions requeridas en Supabase y verifica los secrets de R2 cuando aplique.'
 
   if (responseText && responseText.trim().length > 0) {
     return `${base} ${deployHint} Detalle: ${responseText}`
@@ -317,5 +317,27 @@ export async function deleteEvidencia(evidenciaId: number): Promise<{ success: b
       throw error
     }
     throw new Error(getFunctionErrorMessage('r2-delete'))
+  }
+}
+
+export interface DeleteServicioCompletoResult {
+  success: boolean
+  servicioId: number
+  evidenciasDeleted: number
+  refaccionesDeleted: number
+  cierresDeleted: number
+  r2Deleted: number
+}
+
+export async function deleteServicioCompleto(servicioId: number): Promise<DeleteServicioCompletoResult> {
+  try {
+    return await invokeFunctionWithAuthRetry<DeleteServicioCompletoResult>('admin-delete-servicio', {
+      servicioId,
+    })
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error
+    }
+    throw new Error(getFunctionErrorMessage('admin-delete-servicio'))
   }
 }

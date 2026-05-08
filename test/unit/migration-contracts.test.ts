@@ -64,6 +64,20 @@ describe('database and edge-function contracts', () => {
     expect(allMigrations).toContain('servicio_refacciones_tecnico_unique')
   })
 
+  it('deletes services through an admin RPC that cleans references and restores inventory', () => {
+    expect(allMigrations).toContain('delete_servicio_completo')
+    expect(allMigrations).toContain('p_dry_run boolean default false')
+    expect(allMigrations).toContain("coalesce(v_actor_role, '') <> 'admin'")
+    expect(allMigrations).toContain('update public.maquinas_en_taller')
+    expect(allMigrations).toContain('update public.maquinas_taller_movimientos')
+    expect(allMigrations).toContain('delete from public.cierres')
+    expect(allMigrations).toContain('delete from public.evidencias')
+    expect(allMigrations).toContain('delete from public.servicio_refacciones')
+    expect(allMigrations).toContain("coalesce(servicio_refacciones.inventory_source, 'general') = 'tecnico'")
+    expect(allMigrations).toContain("'devolucion_tecnico'")
+    expect(allMigrations).toContain('grant execute on function public.delete_servicio_completo(bigint, boolean) to authenticated')
+  })
+
   it('keeps installation and retiro machine lifecycle attached to service completion boundary', () => {
     const lifecycle = read('supabase/migrations/024_retiro_detaches_machine_from_cliente.sql')
 
@@ -101,6 +115,7 @@ describe('database and edge-function contracts', () => {
   it('protects privileged edge functions with role checks and required secrets', () => {
     const createEmployee = read('supabase/functions/admin-create-tecnico/index.ts')
     const resetPassword = read('supabase/functions/admin-reset-empleado-password/index.ts')
+    const deleteServicio = read('supabase/functions/admin-delete-servicio/index.ts')
     const r2Upload = read('supabase/functions/r2-upload/index.ts')
     const r2Delete = read('supabase/functions/r2-delete/index.ts')
     const r2Get = read('supabase/functions/r2-presigned-get/index.ts')
@@ -108,6 +123,9 @@ describe('database and edge-function contracts', () => {
     expect(createEmployee).toContain("await requireRole(req, 'admin')")
     expect(createEmployee).toContain('SUPABASE_SERVICE_ROLE_KEY')
     expect(resetPassword).toContain("await requireRole(req, 'admin')")
+    expect(deleteServicio).toContain("await requireRole(req, 'admin')")
+    expect(deleteServicio).toContain('deleteServicioInDatabase(servicioId, token, true)')
+    expect(deleteServicio).toContain('delete_servicio_completo')
     expect(r2Upload).toContain("await requireAnyRole(req, ['admin', 'tecnico'])")
     expect(r2Upload).toContain('ensureServicioAccess')
     expect(r2Delete).toContain("await requireAnyRole(req, ['admin', 'tecnico'])")

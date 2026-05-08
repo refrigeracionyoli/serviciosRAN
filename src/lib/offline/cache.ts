@@ -1481,6 +1481,57 @@ export async function getCachedServicioDetalleSnapshot(ownerId: string, serviceI
   return hydrateServicioFromLookup(record, serviceId, serviciosById, maquinasById, clientesById, profilesById) ?? null
 }
 
+export async function removeCachedServicio(ownerId: string, serviceId: number): Promise<void> {
+  const cierreRows = await offlineDb.cierres.where('ownerId').equals(ownerId).toArray()
+  const cierreKeys = cierreRows
+    .filter((row) => row.servicio_id === serviceId)
+    .map((row) => row.cacheKey)
+
+  const tallerRows = await offlineDb.maquinasTaller.where('ownerId').equals(ownerId).toArray()
+  const updatedTallerRows = tallerRows
+    .filter((row) => row.servicio_id === serviceId)
+    .map((row) => ({
+      ...row,
+      servicio_id: null,
+      servicio: undefined,
+    }))
+
+  const tallerMovimientoRows = await offlineDb.maquinasTallerMovimientos.where('ownerId').equals(ownerId).toArray()
+  const updatedTallerMovimientoRows = tallerMovimientoRows
+    .filter((row) => row.servicio_id === serviceId)
+    .map((row) => ({
+      ...row,
+      servicio_id: null,
+      servicio: undefined,
+    }))
+
+  await offlineDb.transaction(
+    'rw',
+    [
+      offlineDb.servicios,
+      offlineDb.servicioRefacciones,
+      offlineDb.evidencias,
+      offlineDb.cierres,
+      offlineDb.maquinasTaller,
+      offlineDb.maquinasTallerMovimientos,
+    ],
+    async () => {
+      await offlineDb.servicios.delete(buildCacheKey(ownerId, serviceId))
+      await offlineDb.servicioRefacciones.where('[ownerId+serviceId]').equals([ownerId, serviceId]).delete()
+      await offlineDb.evidencias.where('[ownerId+servicio_id]').equals([ownerId, serviceId]).delete()
+      if (cierreKeys.length > 0) {
+        await offlineDb.cierres.bulkDelete(cierreKeys)
+      }
+      if (updatedTallerRows.length > 0) {
+        await offlineDb.maquinasTaller.bulkPut(updatedTallerRows)
+      }
+      if (updatedTallerMovimientoRows.length > 0) {
+        await offlineDb.maquinasTallerMovimientos.bulkPut(updatedTallerMovimientoRows)
+      }
+    },
+  )
+}
+
 function normalizeRefaccionSubtotal(item: Pick<RefaccionInput, 'cantidad' | 'precio_unitario'>): number {
   return Number(item.cantidad) * Number(item.precio_unitario)
 }
