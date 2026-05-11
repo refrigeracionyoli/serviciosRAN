@@ -1,6 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import ExcelJS from 'exceljs'
 import { describe, expect, it } from 'vitest'
+import UZIP from 'uzip'
+import { buildCierresReportBuffer } from '@/lib/cierres-export'
+import { buildCierre, buildServicio } from '../fixtures/domain'
 
 const root = process.cwd()
 
@@ -18,7 +22,9 @@ describe('report export contracts', () => {
 
   it('keeps export code wired to Supabase, R2 evidence downloads, workers, and browser downloads', () => {
     const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
+    const cierres = fs.readFileSync(path.join(root, 'src/lib/cierres-export.ts'), 'utf8')
     const servicios = fs.readFileSync(path.join(root, 'src/lib/servicios-export.ts'), 'utf8')
+    const serviciosPage = fs.readFileSync(path.join(root, 'src/pages/admin/servicios/ServiciosPage.tsx'), 'utf8')
     const dialog = fs.readFileSync(path.join(root, 'src/components/shared/WeeklyReportExportDialog.tsx'), 'utf8')
 
     expect(reportes).toContain('WEEKLY_TEMPLATE_URL')
@@ -41,6 +47,21 @@ describe('report export contracts', () => {
     expect(reportes).toContain('filterBundlesByWeeklyReportMode')
     expect(reportes).toContain("new Worker(new URL('./reportes-export.worker.ts', import.meta.url)")
     expect(reportes).toContain('downloadBlob')
+    expect(cierres).toContain('exportCierresReport')
+    expect(cierres).toContain('buildCierresReportBuffer')
+    expect(cierres).toContain('buildCierresReportBlob')
+    expect(cierres).toContain("workbook.addWorksheet('Hoja1')")
+    expect(cierres).toContain(".gte('fecha_cierre'")
+    expect(cierres).toContain(".lte('fecha_cierre'")
+    expect(cierres).toContain('parte_objeto')
+    expect(cierres).toContain('firma_receptor')
+    expect(cierres).not.toContain('.insert(')
+    expect(cierres).not.toContain('.update(')
+    expect(cierres).not.toContain('.delete(')
+    expect(serviciosPage).toContain('Reporte de cierres')
+    expect(serviciosPage).toContain("import('@/lib/cierres-export')")
+    expect(serviciosPage).toContain('fechaInicio: filtros.fechaDesde')
+    expect(serviciosPage).toContain('fechaFin: filtros.fechaHasta')
     expect(servicios).toContain('exportServiciosExcel')
     expect(servicios).toContain("import('exceljs')")
     expect(servicios).toContain('workbook.xlsx.writeBuffer')
@@ -64,5 +85,59 @@ describe('report export contracts', () => {
     expect(reportes).toContain("replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')")
     expect(reportes).toContain("setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)")
     expect(reportes).not.toContain('removeConditionalFormattingForColumn(document')
+  })
+
+  it('builds a repair-safe cierres workbook without external links', async () => {
+    const buffer = await buildCierresReportBuffer([
+      {
+        servicio: buildServicio({
+          aviso: 30006000794,
+          total: 914,
+          descripcion: 'NL SIX 4 PIRAMIDE..SE HIZO LIMPIEZA A MAQUINA',
+          cliente: {
+            ...buildServicio().cliente!,
+            nombre: 'NL SIX 4 PIRAMIDE',
+          },
+          tecnico: {
+            ...buildServicio().tecnico!,
+            nombre: 'JAIME GATICA',
+          },
+        }),
+        cierre: buildCierre({
+          aviso: 30006000794,
+          parte_objeto: '1130',
+          causa: '1740',
+          descripcion: 'NL SIX 4 PIRAMIDE..SE HIZO LIMPIEZA A MAQUINA',
+          costo_total: 914,
+          firma_receptor: 'SOLO FIRMA',
+          tecnico: {
+            ...buildServicio().tecnico!,
+            nombre: 'JAIME GATICA',
+          },
+        }),
+      },
+    ])
+
+    const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+    const entries = UZIP.parse(bytes)
+
+    expect(Object.keys(entries).some((name) => name.startsWith('xl/externalLinks/'))).toBe(false)
+    expect(entries['xl/workbook.xml']).toBeTruthy()
+    expect(new TextDecoder().decode(entries['xl/workbook.xml'])).not.toContain('externalReference')
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(bytes)
+    const worksheet = workbook.getWorksheet('Hoja1')
+
+    expect(worksheet?.getCell('A2').value).toBe('AVISO')
+    expect(worksheet?.getCell('A3').value).toBe(30006000794)
+    expect(worksheet?.getCell('B3').value).toBe('1130')
+    expect(worksheet?.getCell('C3').value).toBe('1740')
+    expect(worksheet?.getCell('D3').value).toBe('NL SIX 4 PIRAMIDE..SE HIZO LIMPIEZA A MAQUINA')
+    expect(worksheet?.getCell('E3').value).toBe(914)
+    expect(worksheet?.getCell('F3').value).toBe('JAIME GATICA')
+    expect(worksheet?.getCell('G3').value).toBe('SOLO FIRMA')
+    expect(worksheet?.getCell('I15').value).toBeNull()
+    expect(worksheet?.getCell('J15').value).toBeNull()
   })
 })

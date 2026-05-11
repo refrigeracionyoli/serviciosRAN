@@ -9,6 +9,7 @@ import {
   ChevronUp,
   ChevronsLeft,
   ChevronsRight,
+  FileCheck2,
   Download,
   Eye,
   Filter,
@@ -609,6 +610,47 @@ export function ServiciosPage() {
     weeklyExportAbortRef.current?.abort()
   }
 
+  const getSelectedDateRangeLabel = () => {
+    if (filtros.fechaDesde && filtros.fechaHasta) {
+      if (filtros.fechaDesde === filtros.fechaHasta) return formatDate(filtros.fechaDesde)
+      return `${formatDate(filtros.fechaDesde)} - ${formatDate(filtros.fechaHasta)}`
+    }
+    if (filtros.fechaDesde) return `Desde ${formatDate(filtros.fechaDesde)}`
+    if (filtros.fechaHasta) return `Hasta ${formatDate(filtros.fechaHasta)}`
+    return 'Selecciona rango en filtros'
+  }
+
+  const handleExportCierresReport = async () => {
+    if (!filtros.fechaDesde || !filtros.fechaHasta) {
+      toast({
+        title: 'Selecciona un rango',
+        description: 'El reporte de cierres necesita fecha inicial y fecha final en los filtros.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    try {
+      const { exportCierresReport } = await import('@/lib/cierres-export')
+      const result = await exportCierresReport({
+        fechaInicio: filtros.fechaDesde,
+        fechaFin: filtros.fechaHasta,
+      })
+
+      toast({
+        title: 'Reporte de cierres generado',
+        description: `Se descargó ${result.filename} con ${result.totalCierres} cierre(s).`,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No fue posible generar el reporte de cierres.'
+      toast({
+        title: 'Error al exportar cierres',
+        description: message,
+        variant: 'destructive',
+      })
+    }
+  }
+
   const handleConfirmEliminarServicio = async () => {
     if (!servicioAEliminar) return
 
@@ -729,6 +771,14 @@ export function ServiciosPage() {
                 <div>
                   <p className="font-semibold text-ran-navy">Excel del listado actual</p>
                   <p className="text-xs text-ran-slate">Exporta según los filtros aplicados</p>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportCierresReport()}>
+                <FileCheck2 className="h-4 w-4 text-ran-navy" />
+                <div>
+                  <p className="font-semibold text-ran-navy">Reporte de cierres</p>
+                  <p className="text-xs text-ran-slate">{getSelectedDateRangeLabel()}</p>
                 </div>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
