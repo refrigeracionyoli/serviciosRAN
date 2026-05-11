@@ -25,6 +25,14 @@ describe('report export contracts', () => {
     expect(reportes).toContain('EVIDENCE_TEMPLATE_URL')
     expect(reportes).toContain('downloadEvidenciaBlob')
     expect(reportes).toContain('originalBlobToEmbeddedImage')
+    expect(reportes).toContain('resolveServiceCustomerCode')
+    expect(reportes).toContain('setTableColumnName')
+    expect(reportes).toContain('getColumnStyleId')
+    expect(reportes).toContain('replaceConditionalFormattingFormulaText')
+    expect(reportes).toContain("'Fecha Cierre', 'Fecha Servicio'")
+    expect(reportes).toContain("'Fecha Servicio'")
+    expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY')
+    expect(reportes).toContain('mapWithConcurrency(')
     expect(reportes).toContain('exportServiceEvidenceWorkbook')
     expect(reportes).toContain('exportWeeklyReportBundle')
     expect(reportes).toContain('instalaciones_retiros')
@@ -40,5 +48,21 @@ describe('report export contracts', () => {
     expect(servicios).not.toContain('XLSX.writeFile')
     expect(dialog).toContain('WeeklyReportExportDialog')
     expect(dialog).toContain('onCancel')
+  })
+
+  it('keeps the weekly service date as a real Excel date and preserves valid formatting XML', () => {
+    const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
+    const templateXml = require('node:child_process')
+      .execFileSync('unzip', ['-p', 'public/report-templates/formato-semanal-2026.xlsx', 'xl/worksheets/sheet2.xml'], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+
+    expect(templateXml).toMatch(/conditionalFormatting[^>]*sqref="M1:M1048576"/)
+    expect(templateXml).toContain('<xm:sqref>M1:M1048576</xm:sqref>')
+    expect(reportes).toContain("const dateStyleId = getColumnStyleId(document, 'M')")
+    expect(reportes).toContain("replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')")
+    expect(reportes).toContain("setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)")
+    expect(reportes).not.toContain('removeConditionalFormattingForColumn(document')
   })
 })

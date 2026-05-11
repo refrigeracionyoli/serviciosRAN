@@ -30,6 +30,7 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const ZIP_MIME = 'application/zip'
 const REPORT_PROVIDER_DEFAULT = 4010269
 const REPORT_GZ_DEFAULT = 'NUEVO LEON'
+const WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY = 3
 
 export type WeeklyReportExportMode =
   | 'todos'
@@ -187,7 +188,7 @@ interface NormalizedReportService extends ServiceEvidenceExportBundle {
   refaccionesReportType: string
   refaccionesPep: string
   refaccionesPepNombre: string
-  fechaCierreExcel: number | null
+  fechaServicioExcel: number | null
   costoServicio: number
   costoRefacciones: number
   comentario: string
@@ -642,9 +643,55 @@ function setTableReference(files: Record<string, Uint8Array>, tablePath: string,
   files[tablePath] = serializeXml(tableDoc)
 }
 
+function setTableColumnName(
+  files: Record<string, Uint8Array>,
+  tablePath: string,
+  currentName: string,
+  nextName: string,
+) {
+  const tableDoc = parseXml(files[tablePath])
+  const tableRoot = getRootElement(tableDoc)
+  const tableColumn = getElementsByLocalName(tableRoot, 'tableColumn')
+    .find((column) => column.getAttribute('name') === currentName)
+
+  if (tableColumn) {
+    tableColumn.setAttribute('name', nextName)
+    files[tablePath] = serializeXml(tableDoc)
+  }
+}
+
 function getCell(row: Element, column: string): Element | null {
   const reference = `${column}${row.getAttribute('r')}`
   return getDirectChildElementsByLocalName(row, 'c').find((cell) => cell.getAttribute('r') === reference) ?? null
+}
+
+function getColumnStyleId(document: XMLDocument, column: string): number | undefined {
+  const columnNumber = getColumnNumber(column)
+  const cols = getElementsByLocalName(document, 'col')
+
+  for (const col of cols) {
+    const min = Number(col.getAttribute('min'))
+    const max = Number(col.getAttribute('max') ?? col.getAttribute('min'))
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue
+    if (min > columnNumber || columnNumber > max) continue
+
+    const styleId = Number(col.getAttribute('style'))
+    return Number.isFinite(styleId) ? styleId : undefined
+  }
+
+  return undefined
+}
+
+function replaceConditionalFormattingFormulaText(
+  document: XMLDocument,
+  previousText: string,
+  nextText: string,
+) {
+  for (const formula of getElementsByLocalName(document, 'formula')) {
+    if (formula.textContent === `"${previousText}"`) {
+      formula.textContent = `"${nextText}"`
+    }
+  }
 }
 
 function ensureCell(document: XMLDocument, row: Element, column: string): Element {
@@ -1353,6 +1400,15 @@ function toExcelDateSerial(input: string | Date | null | undefined): number | nu
   return Math.floor((utcTime - Date.UTC(1899, 11, 30)) / 86_400_000)
 }
 
+function extractImportedCustomerCode(description: string | null | undefined): string {
+  const match = /No\.?\s*Cte\s+(\d+)/i.exec(description ?? '')
+  return match?.[1] ?? ''
+}
+
+function resolveServiceCustomerCode(servicio: Servicio): string {
+  return servicio.cliente?.codigo_cliente ?? extractImportedCustomerCode(servicio.descripcion)
+}
+
 function sumRefacciones(refacciones: ServicioRefaccion[]): number {
   return refacciones.reduce((total, row) => total + (Number(row.subtotal) || (row.cantidad * row.precio_unitario)), 0)
 }
@@ -1401,9 +1457,9 @@ function normalizeReportService(bundle: ServiceEvidenceExportBundle, lookups: Te
   const refaccionesPepLookup = resolvePep(lookups, gz, refaccionesReportType)
   const costoRefacciones = sumRefacciones(bundle.refacciones)
   const costoServicio = Number(bundle.servicio.costo_mano_obra ?? 0)
-  const fechaCierreSource = bundle.servicio.fecha_cierre
+  const fechaServicioSource = bundle.servicio.fecha_servicio
+    ?? bundle.servicio.fecha_cierre
     ?? bundle.cierre?.created_at
-    ?? bundle.servicio.fecha_servicio
     ?? bundle.servicio.updated_at
 
   return {
@@ -1417,7 +1473,7 @@ function normalizeReportService(bundle: ServiceEvidenceExportBundle, lookups: Te
     refaccionesReportType,
     refaccionesPep: refaccionesPepLookup.pep,
     refaccionesPepNombre: refaccionesPepLookup.nombrePep,
-    fechaCierreExcel: toExcelDateSerial(fechaCierreSource),
+    fechaServicioExcel: toExcelDateSerial(fechaServicioSource),
     costoServicio,
     costoRefacciones,
     comentario: (bundle.cierre?.descripcion ?? bundle.servicio.descripcion ?? '').trim(),
@@ -1646,7 +1702,14 @@ function fillWeeklyRegistroOrdenes(
   const sheetPath = 'xl/worksheets/sheet2.xml'
   const document = getWorksheetDocument(files, sheetPath)
   const sheetData = getSheetData(document)
+  const headerRow = getRow(sheetData, 1)
   const templateRow = getRowTemplate(sheetData, 2)
+  const dateStyleId = getColumnStyleId(document, 'M')
+
+  if (headerRow) {
+    setInlineString(document, headerRow, 'M', 'Fecha Servicio')
+  }
+  replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')
 
   const rows = buildClonedRows(
     templateRow,
@@ -1662,7 +1725,7 @@ function fillWeeklyRegistroOrdenes(
         setInlineString(document, row, 'J', '')
         setInlineString(document, row, 'K', '')
         setInlineString(document, row, 'L', '')
-        setNumber(document, row, 'M', null)
+        setNumber(document, row, 'M', null, dateStyleId)
         setNumber(document, row, 'N', null)
         setInlineString(document, row, 'Q', '')
         return
@@ -1671,10 +1734,10 @@ function fillWeeklyRegistroOrdenes(
       setInlineString(document, row, 'E', data.reportServiceType)
       setNumber(document, row, 'H', data.cierre?.aviso ?? data.servicio.aviso ?? null)
       setNumber(document, row, 'I', data.servicio.orden ?? null)
-      setInlineString(document, row, 'J', data.servicio.cliente?.nombre ?? '')
+      setInlineString(document, row, 'J', resolveServiceCustomerCode(data.servicio))
       setInlineString(document, row, 'K', data.equipmentType)
       setInlineString(document, row, 'L', data.servicio.maquina?.serie ?? '')
-      setNumber(document, row, 'M', data.fechaCierreExcel)
+      setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)
       setNumber(document, row, 'N', data.costoServicio)
       setInlineString(document, row, 'Q', data.comentario)
     },
@@ -1684,6 +1747,7 @@ function fillWeeklyRegistroOrdenes(
   setWorksheetDimension(document, `A1:Q${rows[rows.length - 1]?.getAttribute('r') ?? '2'}`)
   saveWorksheetDocument(files, sheetPath, document)
   setTableReference(files, 'xl/tables/table1.xml', `A1:Q${Math.max(2, normalizedServices.length + 1)}`)
+  setTableColumnName(files, 'xl/tables/table1.xml', 'Fecha Cierre', 'Fecha Servicio')
 }
 
 function fillWeeklyRegistroRefacciones(
@@ -2704,37 +2768,50 @@ async function buildWeeklyReportEntriesFromBundles(
     [weeklyWorkbookFilename]: weeklyWorkbookBytes,
   }
 
-  for (let index = 0; index < bundles.length; index += 1) {
-    const bundle = bundles[index]
-    const progressStart = 42 + ((index / bundles.length) * 48)
-    const progressEnd = 42 + (((index + 1) / bundles.length) * 48)
-    const serviceReference = bundle.servicio.orden ?? bundle.servicio.id
+  let completedEvidenceWorkbooks = 0
+  const serviceWorkbookEntries = await mapWithConcurrency(
+    bundles,
+    WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY,
+    options?.signal,
+    async (bundle, index) => {
+      const serviceReference = bundle.servicio.orden ?? bundle.servicio.id
 
-    emitWeeklyReportProgress(
-      options,
-      progressStart,
-      `Generando evidencia para servicio #${serviceReference}`,
-      `${index + 1} de ${bundles.length}`,
-      index,
-      bundles.length,
-    )
-    await yieldToBrowser(options?.signal)
+      emitWeeklyReportProgress(
+        options,
+        42 + ((completedEvidenceWorkbooks / bundles.length) * 48),
+        `Generando evidencia para servicio #${serviceReference}`,
+        `Procesando ${index + 1} de ${bundles.length}`,
+        completedEvidenceWorkbooks,
+        bundles.length,
+      )
+      await yieldToBrowser(options?.signal)
 
-    const serviceWorkbook = await buildServiceEvidenceWorkbook(bundle, {
-      signal: options?.signal,
-      templateBuffer: evidenceTemplateBuffer,
-    })
-    workbookEntries[serviceWorkbook.filename] = toUint8Array(await serviceWorkbook.blob.arrayBuffer())
+      const serviceWorkbook = await buildServiceEvidenceWorkbook(bundle, {
+        signal: options?.signal,
+        templateBuffer: evidenceTemplateBuffer,
+      })
+      const bytes = toUint8Array(await serviceWorkbook.blob.arrayBuffer())
+      completedEvidenceWorkbooks += 1
 
-    emitWeeklyReportProgress(
-      options,
-      progressEnd,
-      `Generando evidencia para servicio #${serviceReference}`,
-      `Servicio ${index + 1} de ${bundles.length} listo.`,
-      index + 1,
-      bundles.length,
-    )
-    await yieldToBrowser(options?.signal)
+      emitWeeklyReportProgress(
+        options,
+        42 + ((completedEvidenceWorkbooks / bundles.length) * 48),
+        `Generando evidencia para servicio #${serviceReference}`,
+        `Servicio ${completedEvidenceWorkbooks} de ${bundles.length} listo.`,
+        completedEvidenceWorkbooks,
+        bundles.length,
+      )
+      await yieldToBrowser(options?.signal)
+
+      return {
+        filename: serviceWorkbook.filename,
+        bytes,
+      }
+    },
+  )
+
+  for (const entry of serviceWorkbookEntries) {
+    workbookEntries[entry.filename] = entry.bytes
   }
 
   emitWeeklyReportProgress(
