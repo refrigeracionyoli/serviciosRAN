@@ -32,6 +32,10 @@ describe('report export contracts', () => {
     expect(reportes).toContain('downloadEvidenciaBlob')
     expect(reportes).toContain('originalBlobToEmbeddedImage')
     expect(reportes).toContain('resolveServiceCustomerCode')
+    expect(reportes).toContain('removeProtectionArtifacts')
+    expect(reportes).toContain('removeProtectionArtifactsFromXlsxBytes')
+    expect(reportes).toContain('workbookProtection')
+    expect(reportes).toContain('sheetProtection')
     expect(reportes).toContain('setTableColumnName')
     expect(reportes).toContain('getColumnStyleId')
     expect(reportes).toContain('replaceConditionalFormattingFormulaText')
@@ -58,7 +62,9 @@ describe('report export contracts', () => {
     expect(cierres).not.toContain('.insert(')
     expect(cierres).not.toContain('.update(')
     expect(cierres).not.toContain('.delete(')
-    expect(serviciosPage).toContain('Reporte de cierres')
+    expect(serviciosPage).toContain('Reporte de cierres por fecha de cierre')
+    expect(serviciosPage).toContain('Selecciona rango de fecha de cierre')
+    expect(serviciosPage).toContain('El reporte de cierres usa la fecha en que se cerró el servicio')
     expect(serviciosPage).toContain("import('@/lib/cierres-export')")
     expect(serviciosPage).toContain('fechaInicio: filtros.fechaDesde')
     expect(serviciosPage).toContain('fechaFin: filtros.fechaHasta')
@@ -85,6 +91,27 @@ describe('report export contracts', () => {
     expect(reportes).toContain("replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')")
     expect(reportes).toContain("setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)")
     expect(reportes).not.toContain('removeConditionalFormattingForColumn(document')
+  })
+
+  it('removes worksheet and workbook protection from weekly and evidence exports', () => {
+    const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
+    const weeklySheetXml = require('node:child_process')
+      .execFileSync('unzip', ['-p', 'public/report-templates/formato-semanal-2026.xlsx', 'xl/worksheets/sheet2.xml'], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+    const evidenceWorkbookXml = require('node:child_process')
+      .execFileSync('unzip', ['-p', 'public/report-templates/formato-evidencias-os.xlsx', 'xl/workbook.xml'], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+
+    expect(weeklySheetXml).toContain('sheetProtection')
+    expect(evidenceWorkbookXml).toContain('workbookProtection')
+    expect(reportes).toContain('removeProtectionArtifacts(files)')
+    expect(reportes).toContain('removeProtectionArtifactsFromXlsxBytes')
+    expect(reportes).toContain("getElementsByLocalName(sheetDoc, 'sheetProtection')")
+    expect(reportes).toContain("getDirectChildElementsByLocalName(workbookRoot, 'workbookProtection')")
   })
 
   it('builds a repair-safe cierres workbook without external links', async () => {

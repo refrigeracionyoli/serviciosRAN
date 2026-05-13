@@ -612,19 +612,19 @@ export function ServiciosPage() {
 
   const getSelectedDateRangeLabel = () => {
     if (filtros.fechaDesde && filtros.fechaHasta) {
-      if (filtros.fechaDesde === filtros.fechaHasta) return formatDate(filtros.fechaDesde)
-      return `${formatDate(filtros.fechaDesde)} - ${formatDate(filtros.fechaHasta)}`
+      if (filtros.fechaDesde === filtros.fechaHasta) return `Fecha de cierre: ${formatDate(filtros.fechaDesde)}`
+      return `Fecha de cierre: ${formatDate(filtros.fechaDesde)} - ${formatDate(filtros.fechaHasta)}`
     }
-    if (filtros.fechaDesde) return `Desde ${formatDate(filtros.fechaDesde)}`
-    if (filtros.fechaHasta) return `Hasta ${formatDate(filtros.fechaHasta)}`
-    return 'Selecciona rango en filtros'
+    if (filtros.fechaDesde) return `Fecha de cierre desde ${formatDate(filtros.fechaDesde)}`
+    if (filtros.fechaHasta) return `Fecha de cierre hasta ${formatDate(filtros.fechaHasta)}`
+    return 'Selecciona rango de fecha de cierre'
   }
 
   const handleExportCierresReport = async () => {
     if (!filtros.fechaDesde || !filtros.fechaHasta) {
       toast({
         title: 'Selecciona un rango',
-        description: 'El reporte de cierres necesita fecha inicial y fecha final en los filtros.',
+        description: 'El reporte de cierres usa la fecha en que se cerró el servicio. Selecciona fecha inicial y final.',
         variant: 'destructive',
       })
       return
@@ -777,7 +777,7 @@ export function ServiciosPage() {
               <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportCierresReport()}>
                 <FileCheck2 className="h-4 w-4 text-ran-navy" />
                 <div>
-                  <p className="font-semibold text-ran-navy">Reporte de cierres</p>
+                  <p className="font-semibold text-ran-navy">Reporte de cierres por fecha de cierre</p>
                   <p className="text-xs text-ran-slate">{getSelectedDateRangeLabel()}</p>
                 </div>
               </DropdownMenuItem>

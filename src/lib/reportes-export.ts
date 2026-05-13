@@ -532,6 +532,43 @@ function removeCalcChain(files: Record<string, Uint8Array>) {
   files['xl/_rels/workbook.xml.rels'] = serializeXml(workbookRelsDoc)
 }
 
+function removeProtectionArtifacts(files: Record<string, Uint8Array>) {
+  if (files['xl/workbook.xml']) {
+    const workbookDoc = parseXml(files['xl/workbook.xml'])
+    const workbookRoot = getRootElement(workbookDoc)
+    for (const protectedNode of [
+      ...getDirectChildElementsByLocalName(workbookRoot, 'workbookProtection'),
+      ...getDirectChildElementsByLocalName(workbookRoot, 'fileSharing'),
+    ]) {
+      protectedNode.remove()
+    }
+    files['xl/workbook.xml'] = serializeXml(workbookDoc)
+  }
+
+  for (const sheetPath of Object.keys(files).filter((filePath) => /^xl\/worksheets\/sheet\d+\.xml$/.test(filePath))) {
+    const sheetDoc = parseXml(files[sheetPath])
+    const protectedNodes = [
+      ...getElementsByLocalName(sheetDoc, 'sheetProtection'),
+      ...getElementsByLocalName(sheetDoc, 'protectedRanges'),
+      ...getElementsByLocalName(sheetDoc, 'protectedRange'),
+    ]
+
+    for (const protectedNode of protectedNodes) {
+      protectedNode.remove()
+    }
+
+    if (protectedNodes.length > 0) {
+      files[sheetPath] = serializeXml(sheetDoc)
+    }
+  }
+}
+
+function removeProtectionArtifactsFromXlsxBytes(bytes: Uint8Array): Uint8Array {
+  const files = UZIP.parse(toBlobBuffer(bytes))
+  removeProtectionArtifacts(files)
+  return toUint8Array(UZIP.encode(files))
+}
+
 function removeWeeklyPivotArtifacts(files: Record<string, Uint8Array>) {
   delete files['xl/pivotCache/pivotCacheDefinition1.xml']
   delete files['xl/pivotCache/pivotCacheRecords1.xml']
@@ -1997,6 +2034,7 @@ async function buildWeeklyWorkbookBytes(
   const summaryRows = buildWeeklySummaryRows(normalizedServices, input.semana)
 
   removeCalcChain(files)
+  removeProtectionArtifacts(files)
   setCalcPrForFullRecalc(files)
   await yieldToBrowser(signal)
 
@@ -2637,7 +2675,7 @@ async function buildEvidenceWorkbookBytes(
   }
 
   await yieldToBrowser(signal)
-  return toUint8Array(await workbook.xlsx.writeBuffer())
+  return removeProtectionArtifactsFromXlsxBytes(toUint8Array(await workbook.xlsx.writeBuffer()))
 }
 
 export async function buildServiceEvidenceWorkbook(
