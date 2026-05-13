@@ -1,6 +1,13 @@
 import { spawnSync } from 'node:child_process'
 
 const allowedVulnerabilities = {
+  '@babel/plugin-transform-modules-systemjs': {
+    advisories: new Set([
+      '@babel/plugin-transform-modules-systemjs',
+      'GHSA-fv7c-fp4j-7gwp',
+    ]),
+    reason: 'Transitive build-time dependency through workbox-build/Babel for PWA service worker generation. Not bundled into runtime app code.',
+  },
   '@rollup/plugin-terser': {
     advisories: new Set([
       'serialize-javascript',
@@ -8,6 +15,14 @@ const allowedVulnerabilities = {
       'GHSA-qj8w-gfj5-8c6v',
     ]),
     reason: 'Parent package for the allowed serialize-javascript finding in the PWA build toolchain.',
+  },
+  'fast-uri': {
+    advisories: new Set([
+      'fast-uri',
+      'GHSA-q3j6-qgpj-74h6',
+      'GHSA-v39h-62p7-jpjc',
+    ]),
+    reason: 'Transitive dev/build-time dependency through AJV used by build/lint/PWA tooling. Not bundled into runtime app code.',
   },
   exceljs: {
     advisories: new Set([
@@ -43,12 +58,17 @@ const allowedVulnerabilities = {
   },
   'workbox-build': {
     advisories: new Set([
+      '@babel/plugin-transform-modules-systemjs',
       '@rollup/plugin-terser',
+      'fast-uri',
       'serialize-javascript',
+      'GHSA-fv7c-fp4j-7gwp',
       'GHSA-5c6j-r48x-rmvq',
       'GHSA-qj8w-gfj5-8c6v',
+      'GHSA-q3j6-qgpj-74h6',
+      'GHSA-v39h-62p7-jpjc',
     ]),
-    reason: 'Parent package for the allowed serialize-javascript finding in the PWA build toolchain.',
+    reason: 'Parent package for allowed build-time findings in the PWA build toolchain.',
   },
 }
 
