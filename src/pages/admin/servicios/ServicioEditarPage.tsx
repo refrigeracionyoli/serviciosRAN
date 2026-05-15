@@ -78,7 +78,7 @@ function getSafeFechaCierre(preferredDate: string | null | undefined): string {
 }
 
 function getDefaultFechaCierre(servicio: Servicio): string {
-  return getSafeFechaCierre(servicio.fecha_cierre ?? servicio.fecha_servicio ?? servicio.fecha_solicitud)
+  return getSafeFechaCierre(servicio.fecha_cierre ?? formatLocalIsoDate(new Date()))
 }
 
 function hasServicioDataChanges(data: CrearServicioInput, servicio: Servicio): boolean {
@@ -344,7 +344,7 @@ export function ServicioEditarPage() {
       aviso: data.aviso ?? servicio.aviso ?? null,
       tecnicoId: data.tecnico_id ?? servicio.tecnico_id ?? null,
       costoTotal: roundCurrency(Number(data.costo_mano_obra ?? 0) + totalRefaccionesServicio),
-      fechaCierre: getSafeFechaCierre(data.fecha_servicio ?? data.fecha_solicitud),
+      fechaCierre: formatLocalIsoDate(new Date()),
     }
   }
 

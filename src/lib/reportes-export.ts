@@ -38,6 +38,11 @@ export type WeeklyReportExportMode =
   | 'mantenimientos'
   | 'ambos'
 
+export type WeeklyReportExportContentMode =
+  | 'reporte_y_evidencias'
+  | 'solo_reporte'
+  | 'solo_evidencias'
+
 const WEEKLY_REPORT_MODE_CONFIG: Record<WeeklyReportExportMode, { label: string; slug: string }> = {
   todos: {
     label: 'todos los servicios',
@@ -96,6 +101,7 @@ export interface WeeklyReportExportInput {
   fechaInicio: string
   fechaFin: string
   reportMode?: WeeklyReportExportMode
+  contentMode?: WeeklyReportExportContentMode
   tecnicoId?: string | null
   clienteId?: number | null
   tipoServicio?: string | null
@@ -389,6 +395,10 @@ function isInstallationOrRetiroService(servicio: Pick<Servicio, 'tipo_servicio'>
 
 function getWeeklyReportMode(input: WeeklyReportExportInput): WeeklyReportExportMode {
   return input.reportMode ?? 'todos'
+}
+
+function getWeeklyReportContentMode(input: WeeklyReportExportInput): WeeklyReportExportContentMode {
+  return input.contentMode ?? 'reporte_y_evidencias'
 }
 
 function getWeeklyReportModeConfig(mode: WeeklyReportExportMode) {
@@ -2059,8 +2069,10 @@ function buildWeeklyWorkbookFilename(input: WeeklyReportExportInput): string {
 
 function buildWeeklyZipFilename(input: WeeklyReportExportInput): string {
   const mode = getWeeklyReportMode(input)
+  const contentMode = getWeeklyReportContentMode(input)
   const suffix = mode === 'todos' ? '' : `_${getWeeklyReportModeConfig(mode).slug}`
-  return `${sanitizeFilenamePart(input.semana)}${suffix}_ReporteSemanal.zip`
+  const contentSuffix = contentMode === 'solo_evidencias' ? '_SoloEvidencias' : ''
+  return `${sanitizeFilenamePart(input.semana)}${suffix}${contentSuffix}_ReporteSemanal.zip`
 }
 
 function buildWeeklyCombinedZipFilename(semana: string): string {
@@ -2716,6 +2728,21 @@ export async function buildWeeklyReportBundleFromBundles(
   options?: BuildWeeklyReportOptions,
 ): Promise<BuildBinaryResult & WeeklyReportExportResult> {
   const { entries, totalServicios } = await buildWeeklyReportEntriesFromBundles(input, bundles, options)
+  const contentMode = getWeeklyReportContentMode(input)
+
+  if (contentMode === 'solo_reporte') {
+    const weeklyWorkbookFilename = buildWeeklyWorkbookFilename(input)
+    const weeklyWorkbookBytes = entries[weeklyWorkbookFilename]
+    if (!weeklyWorkbookBytes) {
+      throw new Error('No se pudo generar el reporte semanal sin evidencias.')
+    }
+
+    return {
+      blob: new Blob([toBlobBuffer(weeklyWorkbookBytes)], { type: XLSX_MIME }),
+      filename: weeklyWorkbookFilename,
+      totalServicios,
+    }
+  }
 
   const zipBlob = new Blob([toBlobBuffer(toUint8Array(UZIP.encode(entries)))], { type: ZIP_MIME })
   emitWeeklyReportProgress(
@@ -2803,7 +2830,20 @@ async function buildWeeklyReportEntriesFromBundles(
   await yieldToBrowser(options?.signal)
 
   const workbookEntries: Record<string, Uint8Array> = {
-    [weeklyWorkbookFilename]: weeklyWorkbookBytes,
+  }
+  const contentMode = getWeeklyReportContentMode(input)
+  const shouldIncludeWeeklyWorkbook = contentMode !== 'solo_evidencias'
+  const shouldIncludeEvidenceWorkbooks = contentMode !== 'solo_reporte'
+
+  if (shouldIncludeWeeklyWorkbook) {
+    workbookEntries[weeklyWorkbookFilename] = weeklyWorkbookBytes
+  }
+
+  if (!shouldIncludeEvidenceWorkbooks) {
+    return {
+      entries: workbookEntries,
+      totalServicios: bundles.length,
+    }
   }
 
   let completedEvidenceWorkbooks = 0

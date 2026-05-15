@@ -89,7 +89,7 @@ export function ServicioNuevoPage() {
             disabled={isPending}
             className="h-11 rounded-xl bg-ran-navy px-8 text-base font-semibold hover:bg-ran-navy/90"
           >
-            {isPending ? 'Guardando...' : 'Guardar servicio'}
+            {isPending ? 'Guardando...' : 'Guardar y continuar'}
           </Button>
         </div>
       </div>
@@ -114,7 +114,7 @@ export function ServicioNuevoPage() {
             crearServicio(data, {
               onSuccess: (servicio) => {
                 localStorage.removeItem(SERVICIO_DRAFT_KEY)
-                navigate(`/servicios/${servicio.id}`)
+                navigate(`/servicios/${servicio.id}/editar`)
               },
             })
           }}

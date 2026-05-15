@@ -34,6 +34,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -49,14 +52,14 @@ import { useEliminarServicioMutation, useServiciosQuery } from '@/hooks/use-serv
 import { useToast } from '@/hooks/use-toast'
 import { useFiltrosStore } from '@/stores/filtros.store'
 import { formatDate, formatMXN, formatWeek } from '@/lib/utils'
-import type { WeeklyReportExportMode, WeeklyReportProgress } from '@/lib/reportes-export'
+import type { WeeklyReportExportContentMode, WeeklyReportExportMode, WeeklyReportProgress } from '@/lib/reportes-export'
 import type { ClaseOrden, Servicio, ServicioStatus, TipoServicio } from '@/types/domain.types'
 
 const PAGE_SIZE = 10
 
 type DateFilterField = 'servicio' | 'solicitud' | 'actividad'
 type SortDirection = 'asc' | 'desc'
-type ServicioSortKey = 'fecha_solicitud' | 'fecha_servicio' | 'status' | 'tipo_servicio' | 'clase_orden'
+type ServicioSortKey = 'fecha_solicitud' | 'fecha_servicio' | 'fecha_cierre' | 'status' | 'tipo_servicio' | 'clase_orden'
 
 interface ServicioSortState {
   key: ServicioSortKey
@@ -92,6 +95,7 @@ const DATE_FIELD_OPTIONS: Array<{ value: DateFilterField; label: string }> = [
 ]
 
 const SORT_OPTIONS: SortOption[] = [
+  { value: 'fecha_cierre', label: 'F. Cierre' },
   { value: 'fecha_servicio', label: 'F. Servicio' },
   { value: 'fecha_solicitud', label: 'F. Solicitud' },
   { value: 'status', label: 'Status' },
@@ -179,6 +183,7 @@ function getServicioDateForFilter(servicio: Servicio, field: DateFilterField): s
 }
 
 function getServicioSortValue(servicio: Servicio, key: ServicioSortKey): string | number | null {
+  if (key === 'fecha_cierre') return servicio.fecha_cierre
   if (key === 'fecha_solicitud') return servicio.fecha_solicitud
   if (key === 'fecha_servicio') return servicio.fecha_servicio
   if (key === 'status') return STATUS_SORT_WEIGHT[servicio.status]
@@ -672,7 +677,10 @@ export function ServiciosPage() {
     }
   }
 
-  const handleExportWeeklyReport = async (reportMode: WeeklyReportExportMode) => {
+  const handleExportWeeklyReport = async (
+    reportMode: WeeklyReportExportMode,
+    contentMode: WeeklyReportExportContentMode = 'reporte_y_evidencias',
+  ) => {
     if (isExportingWeekly) return
 
     setIsExportingWeekly(true)
@@ -693,6 +701,7 @@ export function ServiciosPage() {
         fechaInicio: weekRange.inicio,
         fechaFin: weekRange.fin,
         reportMode,
+        contentMode,
         tecnicoId: filtros.tecnicoId,
         clienteId: filtros.clienteId,
         tipoServicios: tipoFilters,
@@ -782,24 +791,46 @@ export function ServiciosPage() {
                 </div>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportWeeklyReport('instalaciones_retiros')} disabled={isExportingWeekly}>
-                <CalendarDays className="h-4 w-4 text-ran-navy" />
-                <div>
-                  <p className="font-semibold text-ran-navy">
-                    {isExportingWeekly ? 'Generando reporte semanal...' : 'Reporte instalaciones/retiros'}
-                  </p>
-                  <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
-                </div>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportWeeklyReport('mantenimientos')} disabled={isExportingWeekly}>
-                <CalendarDays className="h-4 w-4 text-ran-navy" />
-                <div>
-                  <p className="font-semibold text-ran-navy">
-                    {isExportingWeekly ? 'Generando reporte semanal...' : 'Reporte mantenimientos'}
-                  </p>
-                  <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
-                </div>
-              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-3 rounded-lg p-3">
+                  <CalendarDays className="h-4 w-4 text-ran-navy" />
+                  <div>
+                    <p className="font-semibold text-ran-navy">Instalaciones/retiros</p>
+                    <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
+                  </div>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-56 rounded-xl p-2">
+                  <DropdownMenuItem onClick={() => void handleExportWeeklyReport('instalaciones_retiros', 'solo_reporte')} disabled={isExportingWeekly}>
+                    Solo reporte semanal
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleExportWeeklyReport('instalaciones_retiros', 'reporte_y_evidencias')} disabled={isExportingWeekly}>
+                    Reporte + evidencias
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleExportWeeklyReport('instalaciones_retiros', 'solo_evidencias')} disabled={isExportingWeekly}>
+                    Solo evidencias
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-3 rounded-lg p-3">
+                  <CalendarDays className="h-4 w-4 text-ran-navy" />
+                  <div>
+                    <p className="font-semibold text-ran-navy">Mantenimientos</p>
+                    <p className="text-xs text-ran-slate">{weeklyReportLabel}</p>
+                  </div>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-56 rounded-xl p-2">
+                  <DropdownMenuItem onClick={() => void handleExportWeeklyReport('mantenimientos', 'solo_reporte')} disabled={isExportingWeekly}>
+                    Solo reporte semanal
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleExportWeeklyReport('mantenimientos', 'reporte_y_evidencias')} disabled={isExportingWeekly}>
+                    Reporte + evidencias
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleExportWeeklyReport('mantenimientos', 'solo_evidencias')} disabled={isExportingWeekly}>
+                    Solo evidencias
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuItem className="gap-3 rounded-lg p-3" onClick={() => void handleExportWeeklyReport('ambos')} disabled={isExportingWeekly}>
                 <CalendarDays className="h-4 w-4 text-ran-navy" />
                 <div>
@@ -998,7 +1029,7 @@ export function ServiciosPage() {
             </div>
 
             <HorizontalScrollArea>
-              <table className="w-full min-w-[1700px] text-sm">
+              <table className="w-full min-w-[1780px] text-sm">
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-xs font-bold uppercase tracking-wide text-ran-slate">
                     <th className="px-5 py-3">Orden</th>
@@ -1012,6 +1043,7 @@ export function ServiciosPage() {
                     <th className="px-3 py-3">Técnico</th>
                     <th className="px-3 py-3">F. Solicitud</th>
                     <th className="px-3 py-3">F. Servicio</th>
+                    <th className="px-3 py-3">F. Cierre</th>
                     <th className="px-3 py-3">Status</th>
                     <th className="px-3 py-3">Total</th>
                     <th className="w-14 px-3 py-3" />
@@ -1020,7 +1052,7 @@ export function ServiciosPage() {
                 <tbody>
                   {pageRows.length === 0 && (
                     <tr>
-                      <td colSpan={14} className="px-4 py-16 text-center text-ran-slate">
+                      <td colSpan={15} className="px-4 py-16 text-center text-ran-slate">
                         No hay servicios para los filtros aplicados.
                       </td>
                     </tr>
@@ -1042,6 +1074,7 @@ export function ServiciosPage() {
                       <td className="px-3 py-3.5 text-ran-slate">{servicio.tecnico?.nombre ?? '—'}</td>
                       <td className="px-3 py-3.5 text-ran-slate">{formatDate(servicio.fecha_solicitud)}</td>
                       <td className="px-3 py-3.5 text-ran-slate">{formatDate(servicio.fecha_servicio)}</td>
+                      <td className="px-3 py-3.5 text-ran-slate">{formatDate(servicio.fecha_cierre)}</td>
                       <td className="px-3 py-3.5">
                         <ServicioStatusBadge status={servicio.status} className="rounded-lg border px-3 py-1 text-xs font-semibold" />
                       </td>

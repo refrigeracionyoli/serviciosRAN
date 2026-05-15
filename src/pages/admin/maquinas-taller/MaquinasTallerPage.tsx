@@ -147,6 +147,8 @@ export function MaquinasTallerPage() {
   const [registroDiagnostico, setRegistroDiagnostico] = useState('')
   const [registroSerie, setRegistroSerie] = useState('')
   const [registroModelo, setRegistroModelo] = useState('')
+  const [registroCodigoCliente, setRegistroCodigoCliente] = useState('')
+  const [registroNombreCliente, setRegistroNombreCliente] = useState('')
   const [openUrbanDialog, setOpenUrbanDialog] = useState(false)
   const [urbanFecha, setUrbanFecha] = useState(todayIso)
   const [urbanDetalle, setUrbanDetalle] = useState('')
@@ -295,6 +297,12 @@ export function MaquinasTallerPage() {
   )
   const isRegistroManual = registroMotivo === 'manual'
   const isSubmittingRegistro = registrandoMaquina || creandoMaquina
+  const clienteDerivadoRegistro = useMemo(() => {
+    const codigo = registroCodigoCliente.trim()
+    if (!codigo) return null
+    return clientes.find((cliente) => cliente.codigo_cliente === codigo) ?? null
+  }, [clientes, registroCodigoCliente])
+  const nombreClienteRegistro = clienteDerivadoRegistro?.nombre ?? registroNombreCliente
 
   const resetRegistroForm = () => {
     setRegistroMotivo('manual')
@@ -305,6 +313,8 @@ export function MaquinasTallerPage() {
     setRegistroDiagnostico('')
     setRegistroSerie('')
     setRegistroModelo('')
+    setRegistroCodigoCliente('')
+    setRegistroNombreCliente('')
   }
 
   const resetUrbanForm = () => {
@@ -342,6 +352,17 @@ export function MaquinasTallerPage() {
       if (isRegistroManual) {
         const serie = registroSerie.trim()
         const modelo = registroModelo.trim()
+        const codigoCliente = registroCodigoCliente.trim()
+        const nombreCliente = nombreClienteRegistro.trim()
+        const clienteManualId = clienteDerivadoRegistro?.id ?? null
+        const notasCliente = [
+          codigoCliente ? `No. cliente: ${codigoCliente}` : null,
+          nombreCliente ? `Cliente/SIX: ${nombreCliente}` : null,
+        ].filter(Boolean).join(' | ')
+        const detalleIngreso = [
+          registroDiagnostico.trim(),
+          !clienteManualId && notasCliente ? notasCliente : null,
+        ].filter(Boolean).join(' | ')
 
         if (!serie) {
           throw new Error('Ingresa el número de serie de la máquina.')
@@ -359,10 +380,10 @@ export function MaquinasTallerPage() {
           const maquinaCreada = await crearMaquinaAsync({
             serie,
             modelo,
-            cliente_id: null,
+            cliente_id: clienteManualId,
             fecha_instalacion: null,
             status: 'operando',
-            observaciones: registroDiagnostico.trim() || null,
+            observaciones: detalleIngreso || null,
             activo: true,
           })
 
@@ -377,10 +398,16 @@ export function MaquinasTallerPage() {
 
       const created = await registrarEntradaAsync({
         maquina_id: maquinaId,
-        cliente_id: isRegistroManual ? null : parseSelectNumber(registroClienteId) ?? null,
+        cliente_id: isRegistroManual ? clienteDerivadoRegistro?.id ?? null : parseSelectNumber(registroClienteId) ?? null,
         fecha_entrada: registroFecha,
         orden: ordenNumero,
-        diagnostico: registroDiagnostico.trim() || null,
+        diagnostico: isRegistroManual
+          ? [
+            registroDiagnostico.trim(),
+            !clienteDerivadoRegistro && registroCodigoCliente.trim() ? `No. cliente: ${registroCodigoCliente.trim()}` : null,
+            !clienteDerivadoRegistro && nombreClienteRegistro.trim() ? `Cliente/SIX: ${nombreClienteRegistro.trim()}` : null,
+          ].filter(Boolean).join(' | ') || null
+          : registroDiagnostico.trim() || null,
         motivo: registroMotivo,
       })
 
@@ -871,6 +898,39 @@ export function MaquinasTallerPage() {
               <>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
+                    <Label htmlFor="registro-codigo-cliente">No. cliente (opcional)</Label>
+                    <Input
+                      id="registro-codigo-cliente"
+                      value={registroCodigoCliente}
+                      onChange={(event) => setRegistroCodigoCliente(event.target.value.replace(/\D+/g, ''))}
+                      placeholder="Ej. 30006000794"
+                      className="h-10 rounded-xl"
+                    />
+                    {clienteDerivadoRegistro && (
+                      <p className="text-xs text-ran-slate">
+                        Cliente encontrado: {clienteDerivadoRegistro.nombre}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="registro-nombre-cliente">Nombre del SIX (opcional)</Label>
+                    <Input
+                      id="registro-nombre-cliente"
+                      value={nombreClienteRegistro}
+                      onChange={(event) => setRegistroNombreCliente(event.target.value)}
+                      placeholder={clienteDerivadoRegistro?.nombre ?? 'Ej. NL SIX CENTRO'}
+                      className="h-10 rounded-xl"
+                      readOnly={Boolean(clienteDerivadoRegistro)}
+                    />
+                    {clienteDerivadoRegistro && (
+                      <p className="text-xs text-ran-slate">Se llenó automáticamente desde el No. cliente.</p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
                     <Label htmlFor="registro-modelo">Modelo</Label>
                     <Input
                       id="registro-modelo"
@@ -894,7 +954,7 @@ export function MaquinasTallerPage() {
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-ran-slate">
-                  Este modo es para equipos externos. La máquina se registra sin cliente de origen y se crea automáticamente si la serie no existe.
+                  Si el No. cliente existe, se ligará automáticamente. Si no existe, quedará guardado como nota del ingreso.
                 </div>
               </>
             ) : (
@@ -955,12 +1015,12 @@ export function MaquinasTallerPage() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="registro-diagnostico">Detalle inicial (opcional)</Label>
+                <Label htmlFor="registro-diagnostico">Descripción del estado (opcional)</Label>
                 <Input
                   id="registro-diagnostico"
                   value={registroDiagnostico}
                   onChange={(event) => setRegistroDiagnostico(event.target.value)}
-                  placeholder="Notas del ingreso"
+                  placeholder="Estado en que ingresa la máquina"
                   className="h-10 rounded-xl"
                 />
               </div>

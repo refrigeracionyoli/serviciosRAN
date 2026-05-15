@@ -122,10 +122,6 @@ function compareMaquinasByModeloSerie(left: Maquina, right: Maquina): number {
   return left.serie.localeCompare(right.serie, 'es', { sensitivity: 'base' })
 }
 
-function isServicioInstalacionActivo(status: Servicio['status']): boolean {
-  return status === 'pendiente' || status === 'en_ruta'
-}
-
 function isTipoServicioMaquinaHielo(tipoServicio: string): boolean {
   return tipoServicio.trim().toUpperCase().includes('MAQUINA HIELO')
 }
@@ -434,27 +430,16 @@ export function ServicioForm({
   })
 
   const selectedCliente = clientes.find((cliente) => cliente.id === clienteId)
-  const maquinasReservadasInstalacionIds = useMemo(() => {
-    return new Set(
-      serviciosRegistrados
-        .filter((servicioRegistrado) => servicioRegistrado.id !== servicio?.id)
-        .filter((servicioRegistrado) => isServicioInstalacionActivo(servicioRegistrado.status))
-        .filter((servicioRegistrado) => servicioRegistrado.tipo_servicio.trim().toUpperCase().includes('INSTALACION'))
-        .map((servicioRegistrado) => servicioRegistrado.maquina_id)
-        .filter((maquinaRegistradaId): maquinaRegistradaId is number => typeof maquinaRegistradaId === 'number'),
-    )
-  }, [servicio?.id, serviciosRegistrados])
 
   const maquinasInstalables = useMemo(() => {
     const maquinasDisponiblesEnTaller = maquinasTallerAbiertas
-      .filter((registro) => !maquinasReservadasInstalacionIds.has(registro.maquina_id))
       .map((registro) => {
         if (registro.maquina) return registro.maquina
         return maquinasCatalogo.find((maquinaCatalogo) => maquinaCatalogo.id === registro.maquina_id) ?? null
       })
 
     return mergeUniqueMaquinas(maquinasDisponiblesEnTaller)
-  }, [maquinasCatalogo, maquinasReservadasInstalacionIds, maquinasTallerAbiertas])
+  }, [maquinasCatalogo, maquinasTallerAbiertas])
 
   const maquinasClienteOperativas = useMemo(
     () => maquinas.filter((maquina) => maquina.status === 'operando'),
@@ -546,11 +531,6 @@ export function ServicioForm({
           .filter((clase): clase is string => clase.trim().length > 0),
       ],
     ),
-  )
-    .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
-
-  const modelosMaquinaOptions = Array.from(
-    new Set(maquinasCatalogo.map((maquina) => maquina.modelo).filter(Boolean)),
   )
     .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }))
 
@@ -1680,16 +1660,10 @@ export function ServicioForm({
                 <Label htmlFor="nuevo_modelo_maquina">Modelo *</Label>
                 <Input
                   id="nuevo_modelo_maquina"
-                  list="modelos-maquina-list"
                   value={maquinaModalForm.watch('modelo') ?? ''}
                   onChange={(event) => maquinaModalForm.setValue('modelo', event.target.value, { shouldValidate: true, shouldDirty: true })}
-                  placeholder="Seleccionar o escribir modelo"
+                  placeholder="Escribir modelo"
                 />
-                <datalist id="modelos-maquina-list">
-                  {modelosMaquinaOptions.map((modelo) => (
-                    <option key={modelo} value={modelo} />
-                  ))}
-                </datalist>
                 {maquinaModalForm.formState.errors.modelo && (
                   <p className="text-xs text-destructive">{maquinaModalForm.formState.errors.modelo.message}</p>
                 )}
