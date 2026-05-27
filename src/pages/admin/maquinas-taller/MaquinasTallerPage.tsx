@@ -1,10 +1,11 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Clock3, Factory, History, Plus, Search, Wrench } from 'lucide-react'
+import { Clock3, Factory, History, Plus, Search, Trash2, Wrench } from 'lucide-react'
 import {
   AdminCardListSkeleton,
   AdminStatsGridSkeleton,
 } from '@/components/shared/AdminSkeletons'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { DatePickerInput } from '@/components/shared/DatePickerInput'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { Badge } from '@/components/ui/badge'
@@ -33,6 +34,7 @@ import {
   type ServicioTallerOption,
   useMaquinaTallerMovimientosQuery,
   useMaquinasEnTallerQuery,
+  useEliminarMaquinaTallerMutation,
   useRegistrarEntradaTallerMutation,
   useRegistrarSalidaTallerMutation,
   useServiciosTallerQuery,
@@ -152,6 +154,7 @@ export function MaquinasTallerPage() {
   const [openUrbanDialog, setOpenUrbanDialog] = useState(false)
   const [urbanFecha, setUrbanFecha] = useState(todayIso)
   const [urbanDetalle, setUrbanDetalle] = useState('')
+  const [registroAEliminar, setRegistroAEliminar] = useState<MaquinaEnTaller | null>(null)
 
   const { data: registros = [], isLoading } = useMaquinasEnTallerQuery()
   const { data: registrosAbiertos = [] } = useMaquinasEnTallerQuery({ soloAbiertas: true })
@@ -164,6 +167,7 @@ export function MaquinasTallerPage() {
   const { mutateAsync: registrarEntradaAsync, isPending: registrandoMaquina } = useRegistrarEntradaTallerMutation()
   const { mutateAsync: crearMaquinaAsync, isPending: creandoMaquina } = useCrearMaquinaMutation()
   const { mutateAsync: registrarSalidaAsync, isPending: registrandoSalida } = useRegistrarSalidaTallerMutation()
+  const { mutateAsync: eliminarRegistroTallerAsync, isPending: eliminandoRegistroTaller } = useEliminarMaquinaTallerMutation()
 
   const salidasRegistros = useMemo<SalidaTallerResumen[]>(() => {
     return movimientosTaller
@@ -330,6 +334,29 @@ export function MaquinasTallerPage() {
   const handleAbrirUrbanDialog = () => {
     resetUrbanForm()
     setOpenUrbanDialog(true)
+  }
+
+  const handleConfirmarQuitarDeTaller = async () => {
+    if (!registroAEliminar) return
+
+    try {
+      const registro = registroAEliminar
+      await eliminarRegistroTallerAsync({ registro_id: registro.id })
+      setRegistroAEliminar(null)
+      setSelectedRegistroId(null)
+
+      toast({
+        title: 'Máquina quitada de taller',
+        description: 'El registro abierto se eliminó y la máquina quedó fuera de taller.',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo quitar la máquina de taller.'
+      toast({
+        title: 'Error al quitar máquina',
+        description: message,
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleRegistrarMaquina = async (event: FormEvent<HTMLFormElement>) => {
@@ -725,14 +752,25 @@ export function MaquinasTallerPage() {
                           Ver historial completo
                         </Button>
                         {categoriaRegistroSeleccionado === 'en_taller' && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 rounded-lg border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900"
-                            onClick={handleAbrirUrbanDialog}
-                          >
-                            Enviar a Urban
-                          </Button>
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-lg border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800"
+                              onClick={() => setRegistroAEliminar(registroSeleccionado)}
+                            >
+                              <Trash2 className="mr-1 h-3.5 w-3.5" />
+                              Quitar de taller
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-lg border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 hover:text-amber-900"
+                              onClick={handleAbrirUrbanDialog}
+                            >
+                              Enviar a Urban
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -1116,6 +1154,26 @@ export function MaquinasTallerPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(registroAEliminar)}
+        onOpenChange={(open) => {
+          if (!open) setRegistroAEliminar(null)
+        }}
+        title="¿Quitar máquina de taller?"
+        description={
+          registroAEliminar
+            ? `Se eliminará el registro abierto de taller de ${registroAEliminar.maquina?.serie ?? `máquina #${registroAEliminar.maquina_id}`}. Úsalo solo si se registró por error o el retiro se canceló.`
+            : 'Se eliminará el registro abierto de taller.'
+        }
+        confirmLabel="Quitar de taller"
+        cancelLabel="Cancelar"
+        variant="destructive"
+        isLoading={eliminandoRegistroTaller}
+        onConfirm={() => {
+          void handleConfirmarQuitarDeTaller()
+        }}
+      />
     </>
   )
 }

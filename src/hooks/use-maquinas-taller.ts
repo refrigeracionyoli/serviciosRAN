@@ -77,6 +77,10 @@ export interface RegistrarReubicacionTallerInput {
   detalle?: string | null
 }
 
+export interface EliminarMaquinaTallerInput {
+  registro_id: number
+}
+
 const SELECT_MAQUINAS_TALLER = `
   *,
   maquina:maquinas(*, cliente:clientes(id, nombre, codigo_cliente)),
@@ -550,6 +554,91 @@ export function useRegistrarSalidaTallerMutation() {
       }
 
       return queueRegistrarSalidaTaller(ownerId, input)
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: maquinasTallerKeys.all })
+      await qc.invalidateQueries({ queryKey: ['maquinas-taller', 'movimientos'] })
+      await qc.invalidateQueries({ queryKey: maquinasKeys.all })
+      await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+    },
+  })
+}
+
+export function useEliminarMaquinaTallerMutation() {
+  const qc = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (input: EliminarMaquinaTallerInput) => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) {
+        throw new Error('No hay sesión activa para quitar la máquina de taller.')
+      }
+
+      if (!isBrowserOnline() || isLocalNumberId(input.registro_id)) {
+        throw new Error('No se puede quitar una máquina de taller sin conexión. Inténtalo nuevamente con internet.')
+      }
+
+      const { data: registro, error: registroError } = await supabase
+        .from('maquinas_en_taller')
+        .select('id, maquina_id, cliente_id, fecha_salida, status')
+        .eq('id', input.registro_id)
+        .single()
+
+      if (registroError) throw registroError
+
+      if (registro.fecha_salida) {
+        throw new Error('Solo se pueden quitar registros abiertos de taller.')
+      }
+
+      const { data: maquina, error: maquinaError } = await supabase
+        .from('maquinas')
+        .select('status, cliente_id')
+        .eq('id', registro.maquina_id)
+        .single()
+
+      if (maquinaError) throw maquinaError
+
+      const { error: maquinaUpdateError } = await supabase
+        .from('maquinas')
+        .update({
+          status: 'operando',
+          cliente_id: registro.cliente_id ?? maquina.cliente_id,
+        })
+        .eq('id', registro.maquina_id)
+
+      if (maquinaUpdateError) throw maquinaUpdateError
+
+      const rollbackMachine = async () => {
+        await supabase
+          .from('maquinas')
+          .update({
+            status: maquina.status,
+            cliente_id: maquina.cliente_id,
+          })
+          .eq('id', registro.maquina_id)
+      }
+
+      const { error: movimientosDeleteError } = await supabase
+        .from('maquinas_taller_movimientos')
+        .delete()
+        .eq('maquina_taller_id', registro.id)
+
+      if (movimientosDeleteError) {
+        await rollbackMachine()
+        throw movimientosDeleteError
+      }
+
+      const { error: registroDeleteError } = await supabase
+        .from('maquinas_en_taller')
+        .delete()
+        .eq('id', registro.id)
+
+      if (registroDeleteError) {
+        await rollbackMachine()
+        throw registroDeleteError
+      }
+
+      return registro.id
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: maquinasTallerKeys.all })
