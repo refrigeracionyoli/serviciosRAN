@@ -35,6 +35,7 @@ import { settleQueuedCommand } from '@/lib/offline/sync-engine'
 import type { RefaccionInput } from '@/schemas/inventario.schema'
 import { buildServicioCompletionRequirementMessage, summarizeServicioEvidencias } from '@/lib/tecnico/servicio-evidencias'
 import type {
+  ClaseOrden,
   Evidencia,
   RefaccionInventorySource,
   Servicio,
@@ -42,6 +43,7 @@ import type {
   ServicioDateFilterField,
   ServicioRefaccion,
   ServicioStatus,
+  TipoServicio,
 } from '@/types/domain.types'
 import type { CrearServicioInput, EditarServicioInput } from '@/schemas/servicio.schema'
 import { inventarioKeys } from './use-inventario'
@@ -61,6 +63,38 @@ interface NormalizedServiciosListFilters {
 
 interface ServiciosQueryOptions {
   enabled?: boolean
+}
+
+export type ServiciosListSortKey = 'created_at' | 'fecha_solicitud' | 'fecha_servicio' | 'fecha_cierre' | 'status' | 'tipo_servicio' | 'clase_orden'
+export type ServiciosListSortDirection = 'asc' | 'desc'
+
+export interface ServiciosListSort {
+  key: ServiciosListSortKey
+  direction: ServiciosListSortDirection
+}
+
+export interface ServiciosChunkFilters {
+  statuses: ServicioStatus[]
+  tecnicoId: string | null
+  clienteId: number | null
+  fechaDesde: string | null
+  fechaHasta: string | null
+  fechaCampo: ServicioDateFilterField
+  tipoServicios: TipoServicio[]
+  clasesOrden: ClaseOrden[]
+  search: string | null
+}
+
+export interface ServiciosChunkQueryInput {
+  filters: ServiciosChunkFilters
+  from: number
+  to: number
+  sort: ServiciosListSort | null
+}
+
+interface ServiciosChunkResult {
+  rows: Servicio[]
+  totalCount: number
 }
 
 export function normalizeServiciosListFilters(
@@ -95,6 +129,14 @@ export function normalizeServiciosListFilters(
 export const serviciosKeys = {
   all: ['servicios'] as const,
   list: (filtros?: FiltrosServicio) => ['servicios', 'list', normalizeServiciosListFilters(filtros)] as const,
+  chunk: (input: ServiciosChunkQueryInput) => [
+    'servicios',
+    'chunk',
+    normalizeServiciosChunkFilters(input.filters),
+    input.from,
+    input.to,
+    input.sort,
+  ] as const,
   detail: (id: number) => ['servicios', 'detail', id] as const,
   refacciones: (id: number) => ['servicio-refacciones', id] as const,
 }
@@ -134,6 +176,33 @@ function getServicioDateForFilter(servicio: Servicio, field: ServicioDateFilterF
   return servicio.fecha_servicio ?? servicio.fecha_solicitud
 }
 
+function normalizeServiciosChunkFilters(filters: ServiciosChunkFilters): ServiciosChunkFilters {
+  return {
+    statuses: [...filters.statuses].sort(),
+    tecnicoId: filters.tecnicoId,
+    clienteId: filters.clienteId,
+    fechaDesde: filters.fechaDesde,
+    fechaHasta: filters.fechaHasta,
+    fechaCampo: filters.fechaCampo,
+    tipoServicios: [...filters.tipoServicios].sort(),
+    clasesOrden: [...filters.clasesOrden].sort(),
+    search: filters.search?.trim() || null,
+  }
+}
+
+function hasChunkFilters(filters: ServiciosChunkFilters): boolean {
+  return Boolean(
+    filters.statuses.length
+    || filters.tecnicoId
+    || filters.clienteId
+    || filters.fechaDesde
+    || filters.fechaHasta
+    || filters.tipoServicios.length
+    || filters.clasesOrden.length
+    || filters.search?.trim(),
+  )
+}
+
 function matchesServicioListFilters(
   servicio: Servicio,
   filtros: NormalizedServiciosListFilters | null | undefined,
@@ -167,6 +236,74 @@ function matchesServicioListFilters(
   }
 
   return true
+}
+
+function matchesServicioChunkFilters(servicio: Servicio, filters: ServiciosChunkFilters): boolean {
+  if (filters.statuses.length > 0 && !filters.statuses.includes(servicio.status)) return false
+  if (filters.tecnicoId && servicio.tecnico_id !== filters.tecnicoId) return false
+  if (filters.clienteId && servicio.cliente_id !== filters.clienteId) return false
+  if (filters.tipoServicios.length > 0 && !filters.tipoServicios.includes(servicio.tipo_servicio)) return false
+  if (filters.clasesOrden.length > 0 && (!servicio.clase_orden || !filters.clasesOrden.includes(servicio.clase_orden))) return false
+
+  const fecha = getServicioDateForFilter(servicio, filters.fechaCampo)
+  if (filters.fechaDesde && (!fecha || fecha < filters.fechaDesde)) return false
+  if (filters.fechaHasta && (!fecha || fecha > filters.fechaHasta)) return false
+
+  const needle = filters.search?.trim().toLowerCase()
+  if (needle) {
+    const values = [
+      servicio.orden?.toString() ?? '',
+      servicio.aviso?.toString() ?? '',
+      servicio.clase_orden ?? '',
+      servicio.tipo_servicio ?? '',
+      servicio.descripcion ?? '',
+      servicio.cliente?.codigo_cliente ?? '',
+      servicio.cliente?.nombre ?? '',
+      servicio.cliente?.municipio ?? '',
+      servicio.maquina?.modelo ?? '',
+      servicio.maquina?.serie ?? '',
+      servicio.tecnico?.nombre ?? '',
+    ]
+
+    if (!values.some((value) => value.toLowerCase().includes(needle))) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function getServicioChunkSortValue(servicio: Servicio, key: ServiciosListSortKey): string | number | null {
+  if (key === 'created_at') return servicio.created_at
+  if (key === 'fecha_cierre') return servicio.fecha_cierre
+  if (key === 'fecha_solicitud') return servicio.fecha_solicitud
+  if (key === 'fecha_servicio') return servicio.fecha_servicio
+  if (key === 'status') return servicio.status
+  if (key === 'tipo_servicio') return servicio.tipo_servicio
+  return servicio.clase_orden
+}
+
+function sortServiciosChunkRows(rows: Servicio[], sort: ServiciosListSort | null): Servicio[] {
+  const activeSort = sort ?? { key: 'created_at', direction: 'desc' as const }
+  const directionMultiplier = activeSort.direction === 'asc' ? 1 : -1
+
+  return [...rows].sort((left, right) => {
+    const leftValue = getServicioChunkSortValue(left, activeSort.key)
+    const rightValue = getServicioChunkSortValue(right, activeSort.key)
+    const leftMissing = leftValue === null || leftValue === ''
+    const rightMissing = rightValue === null || rightValue === ''
+
+    if (leftMissing && rightMissing) return (right.created_at ?? '').localeCompare(left.created_at ?? '')
+    if (leftMissing) return 1
+    if (rightMissing) return -1
+
+    const result = typeof leftValue === 'number' && typeof rightValue === 'number'
+      ? leftValue - rightValue
+      : String(leftValue).localeCompare(String(rightValue), 'es', { sensitivity: 'base', numeric: true })
+
+    if (result !== 0) return result * directionMultiplier
+    return (right.created_at ?? '').localeCompare(left.created_at ?? '')
+  })
 }
 
 function mergeServicioIntoList(
@@ -307,6 +444,127 @@ function toRefaccionInputs(rows: ServicioRefaccion[]): Array<RefaccionInput & { 
   }))
 }
 
+function sanitizePostgrestPattern(value: string): string {
+  return value
+    .replace(/[,%()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function resolveServiciosSearchConditions(rawSearch: string | null): Promise<string[]> {
+  const search = sanitizePostgrestPattern(rawSearch ?? '')
+  if (!search) return []
+
+  const ilikePattern = `*${search}*`
+  const conditions = [
+    `tipo_servicio.ilike.${ilikePattern}`,
+    `clase_orden.ilike.${ilikePattern}`,
+    `descripcion.ilike.${ilikePattern}`,
+  ]
+
+  if (/^\d+$/.test(search)) {
+    conditions.push(`orden.eq.${search}`, `aviso.eq.${search}`)
+  }
+
+  const [clientesResult, maquinasResult, tecnicosResult] = await Promise.all([
+    supabase
+      .from('clientes')
+      .select('id')
+      .or(`codigo_cliente.ilike.${ilikePattern},nombre.ilike.${ilikePattern},municipio.ilike.${ilikePattern}`)
+      .limit(500),
+    supabase
+      .from('maquinas')
+      .select('id')
+      .or(`modelo.ilike.${ilikePattern},serie.ilike.${ilikePattern}`)
+      .limit(500),
+    supabase
+      .from('profiles')
+      .select('id')
+      .ilike('nombre', `%${search}%`)
+      .limit(250),
+  ])
+
+  if (clientesResult.error) throw clientesResult.error
+  if (maquinasResult.error) throw maquinasResult.error
+  if (tecnicosResult.error) throw tecnicosResult.error
+
+  const clienteIds = (clientesResult.data ?? []).map((row) => row.id).filter((id): id is number => typeof id === 'number')
+  const maquinaIds = (maquinasResult.data ?? []).map((row) => row.id).filter((id): id is number => typeof id === 'number')
+  const tecnicoIds = (tecnicosResult.data ?? []).map((row) => row.id).filter((id): id is string => typeof id === 'string')
+
+  if (clienteIds.length > 0) conditions.push(`cliente_id.in.(${clienteIds.join(',')})`)
+  if (maquinaIds.length > 0) conditions.push(`maquina_id.in.(${maquinaIds.join(',')})`)
+  if (tecnicoIds.length > 0) conditions.push(`tecnico_id.in.(${tecnicoIds.join(',')})`)
+
+  return conditions
+}
+
+async function fetchServiciosChunkRows(
+  input: ServiciosChunkQueryInput,
+  includeCount: boolean,
+): Promise<ServiciosChunkResult> {
+  const filters = normalizeServiciosChunkFilters(input.filters)
+  const searchConditions = await resolveServiciosSearchConditions(filters.search)
+
+  let query = includeCount
+    ? supabase.from('servicios').select(SELECT_SERVICIO, { count: 'exact' })
+    : supabase.from('servicios').select(SELECT_SERVICIO)
+
+  if (filters.statuses.length === 1) query = query.eq('status', filters.statuses[0])
+  if (filters.statuses.length > 1) query = query.in('status', filters.statuses)
+  if (filters.tecnicoId) query = query.eq('tecnico_id', filters.tecnicoId)
+  if (filters.clienteId) query = query.eq('cliente_id', filters.clienteId)
+  if (filters.tipoServicios.length === 1) query = query.eq('tipo_servicio', filters.tipoServicios[0])
+  if (filters.tipoServicios.length > 1) query = query.in('tipo_servicio', filters.tipoServicios)
+  if (filters.clasesOrden.length === 1) query = query.eq('clase_orden', filters.clasesOrden[0])
+  if (filters.clasesOrden.length > 1) query = query.in('clase_orden', filters.clasesOrden)
+
+  if (filters.fechaDesde || filters.fechaHasta) {
+    if (filters.fechaCampo === 'solicitud') {
+      if (filters.fechaDesde) query = query.gte('fecha_solicitud', filters.fechaDesde)
+      if (filters.fechaHasta) query = query.lte('fecha_solicitud', filters.fechaHasta)
+    } else if (filters.fechaCampo === 'actividad') {
+      const servicioConditions: string[] = []
+      const solicitudConditions: string[] = ['fecha_servicio.is.null']
+
+      if (filters.fechaDesde) {
+        servicioConditions.push(`fecha_servicio.gte.${filters.fechaDesde}`)
+        solicitudConditions.push(`fecha_solicitud.gte.${filters.fechaDesde}`)
+      }
+      if (filters.fechaHasta) {
+        servicioConditions.push(`fecha_servicio.lte.${filters.fechaHasta}`)
+        solicitudConditions.push(`fecha_solicitud.lte.${filters.fechaHasta}`)
+      }
+
+      query = query.or(`and(${servicioConditions.join(',')}),and(${solicitudConditions.join(',')})`)
+    } else {
+      if (filters.fechaDesde) query = query.gte('fecha_servicio', filters.fechaDesde)
+      if (filters.fechaHasta) query = query.lte('fecha_servicio', filters.fechaHasta)
+    }
+  }
+
+  if (searchConditions.length > 0) {
+    query = query.or(searchConditions.join(','))
+  }
+
+  const activeSort = input.sort ?? { key: 'created_at', direction: 'desc' as const }
+  query = query.order(activeSort.key, {
+    ascending: activeSort.direction === 'asc',
+    nullsFirst: false,
+  })
+  if (activeSort.key !== 'created_at') {
+    query = query.order('created_at', { ascending: false })
+  }
+
+  const { data, error, count } = await query.range(input.from, input.to)
+  if (error) throw error
+
+  return {
+    rows: (data ?? []) as Servicio[],
+    totalCount: count ?? data?.length ?? 0,
+  }
+}
+
 export function useServiciosQuery(filtros?: FiltrosServicio, options?: ServiciosQueryOptions) {
   const normalizedFilters = normalizeServiciosListFilters(filtros) ?? undefined
 
@@ -366,6 +624,68 @@ export function useServiciosQuery(filtros?: FiltrosServicio, options?: Servicios
     },
     staleTime: 1000 * 60 * 5,
   })
+}
+
+export function useServiciosChunkQuery(input: ServiciosChunkQueryInput, options?: ServiciosQueryOptions) {
+  const normalizedFilters = normalizeServiciosChunkFilters(input.filters)
+
+  return useQuery({
+    queryKey: serviciosKeys.chunk({ ...input, filters: normalizedFilters }),
+    enabled: options?.enabled ?? true,
+    queryFn: async () => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) return { rows: [], totalCount: 0 }
+
+      const shouldUseLocalOnly = await hasBlockingRemoteFetchCommands(ownerId, [...UNRESOLVED_SERVICE_COMMANDS])
+      if (shouldUseLocalOnly || !isBrowserOnline()) {
+        const localRows = await getCachedServiciosSnapshot(ownerId)
+        const filteredRows = hasChunkFilters(normalizedFilters)
+          ? localRows.filter((servicio) => matchesServicioChunkFilters(servicio, normalizedFilters))
+          : localRows
+        const sortedRows = sortServiciosChunkRows(filteredRows, input.sort)
+
+        return {
+          rows: sortedRows.slice(input.from, input.to + 1),
+          totalCount: sortedRows.length,
+        }
+      }
+
+      return withOfflineFallback({
+        remote: async () => {
+          const result = await fetchServiciosChunkRows({ ...input, filters: normalizedFilters }, true)
+          await Promise.all(result.rows.map((servicio) => upsertCachedServicio(ownerId, servicio)))
+          return result
+        },
+        local: async () => {
+          const localRows = await getCachedServiciosSnapshot(ownerId)
+          const filteredRows = hasChunkFilters(normalizedFilters)
+            ? localRows.filter((servicio) => matchesServicioChunkFilters(servicio, normalizedFilters))
+            : localRows
+          const sortedRows = sortServiciosChunkRows(filteredRows, input.sort)
+
+          return {
+            rows: sortedRows.slice(input.from, input.to + 1),
+            totalCount: sortedRows.length,
+          }
+        },
+      })
+    },
+    staleTime: 1000 * 60 * 5,
+  })
+}
+
+export async function fetchServiciosForListExport(filters: ServiciosChunkFilters, sort: ServiciosListSort | null): Promise<Servicio[]> {
+  return fetchPaginatedRows<Servicio>((from, to) => (
+    fetchServiciosChunkRows({
+      filters,
+      from,
+      to,
+      sort,
+    }, false).then((result) => ({
+      data: result.rows,
+      error: null,
+    }))
+  ))
 }
 
 export function useServicioDetalleQuery(id: number) {

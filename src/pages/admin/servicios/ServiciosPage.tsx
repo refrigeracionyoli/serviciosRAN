@@ -48,7 +48,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useEliminarServicioMutation, useServiciosQuery } from '@/hooks/use-servicios'
+import {
+  fetchServiciosForListExport,
+  useEliminarServicioMutation,
+  useServiciosChunkQuery,
+  type ServiciosListSort,
+  type ServiciosListSortKey,
+} from '@/hooks/use-servicios'
+import { useTecnicosQuery } from '@/hooks/use-tecnicos'
 import { useToast } from '@/hooks/use-toast'
 import { useFiltrosStore } from '@/stores/filtros.store'
 import { formatDate, formatMXN, formatWeek } from '@/lib/utils'
@@ -56,9 +63,11 @@ import type { WeeklyReportExportContentMode, WeeklyReportExportMode, WeeklyRepor
 import type { ClaseOrden, Servicio, ServicioDateFilterField, ServicioStatus, TipoServicio } from '@/types/domain.types'
 
 const PAGE_SIZE = 10
+const CHUNK_PAGE_COUNT = 5
+const CHUNK_SIZE = PAGE_SIZE * CHUNK_PAGE_COUNT
 
 type SortDirection = 'asc' | 'desc'
-type ServicioSortKey = 'fecha_solicitud' | 'fecha_servicio' | 'fecha_cierre' | 'status' | 'tipo_servicio' | 'clase_orden'
+type ServicioSortKey = Exclude<ServiciosListSortKey, 'created_at'>
 
 interface ServicioSortState {
   key: ServicioSortKey
@@ -93,6 +102,21 @@ const DATE_FIELD_OPTIONS: Array<{ value: ServicioDateFilterField; label: string 
   { value: 'solicitud', label: 'Fecha solicitud' },
 ]
 
+const BASE_TIPO_SERVICIO_OPTIONS: Array<{ value: TipoServicio; label: string }> = [
+  { value: 'MTTO CORRECTIVO RUTA - MAQUINA HIELO' as TipoServicio, label: 'MTTO CORRECTIVO RUTA - MAQUINA HIELO' },
+  { value: 'MTTO CORRECTIVO PISO - MAQUINA HIELO' as TipoServicio, label: 'MTTO CORRECTIVO PISO - MAQUINA HIELO' },
+  { value: 'MTTO PREVENTIVO RUTA - MAQUINA HIELO' as TipoServicio, label: 'MTTO PREVENTIVO RUTA - MAQUINA HIELO' },
+  { value: 'INSTALACION - MAQUINA HIELO' as TipoServicio, label: 'INSTALACION - MAQUINA HIELO' },
+  { value: 'RETIRO - MAQUINA HIELO' as TipoServicio, label: 'RETIRO - MAQUINA HIELO' },
+  { value: 'FLETE MOV GZ - MAQUINA HIELO' as TipoServicio, label: 'FLETE MOV GZ - MAQUINA HIELO' },
+  { value: 'GARANTIA' as TipoServicio, label: 'GARANTIA' },
+]
+
+const BASE_CLASE_ORDEN_OPTIONS: Array<{ value: ClaseOrden; label: string }> = [
+  { value: 'ZSM1', label: 'ZSM1' },
+  { value: 'ZSI2', label: 'ZSI2' },
+]
+
 const SORT_OPTIONS: SortOption[] = [
   { value: 'fecha_cierre', label: 'F. Cierre' },
   { value: 'fecha_servicio', label: 'F. Servicio' },
@@ -101,13 +125,6 @@ const SORT_OPTIONS: SortOption[] = [
   { value: 'tipo_servicio', label: 'Tipo' },
   { value: 'clase_orden', label: 'Clase' },
 ]
-
-const STATUS_SORT_WEIGHT: Record<ServicioStatus, number> = {
-  pendiente: 1,
-  en_ruta: 2,
-  completado: 3,
-  cerrado: 4,
-}
 
 const INITIAL_WEEKLY_EXPORT_PROGRESS: WeeklyReportProgress = {
   progress: 2,
@@ -153,65 +170,6 @@ function parseIsoDateToLocalMidnight(value: string): Date | null {
   }
 
   return parsed
-}
-
-function isWithinDateBounds(fecha: string | null, desde: string | null, hasta: string | null): boolean {
-  if (!desde && !hasta) return true
-  if (!fecha) return false
-
-  const fechaServicio = parseIsoDateToLocalMidnight(fecha)
-  if (!fechaServicio) return false
-
-  if (desde) {
-    const fechaDesde = parseIsoDateToLocalMidnight(desde)
-    if (fechaDesde && fechaServicio < fechaDesde) return false
-  }
-
-  if (hasta) {
-    const fechaHasta = parseIsoDateToLocalMidnight(hasta)
-    if (fechaHasta && fechaServicio > fechaHasta) return false
-  }
-
-  return true
-}
-
-function getServicioDateForFilter(servicio: Servicio, field: ServicioDateFilterField): string | null {
-  if (field === 'servicio') return servicio.fecha_servicio
-  if (field === 'solicitud') return servicio.fecha_solicitud
-  return servicio.fecha_servicio ?? servicio.fecha_solicitud
-}
-
-function getServicioSortValue(servicio: Servicio, key: ServicioSortKey): string | number | null {
-  if (key === 'fecha_cierre') return servicio.fecha_cierre
-  if (key === 'fecha_solicitud') return servicio.fecha_solicitud
-  if (key === 'fecha_servicio') return servicio.fecha_servicio
-  if (key === 'status') return STATUS_SORT_WEIGHT[servicio.status]
-  if (key === 'tipo_servicio') return servicio.tipo_servicio
-  return servicio.clase_orden
-}
-
-function sortServicios(rows: Servicio[], sort: ServicioSortState | null): Servicio[] {
-  if (!sort) return rows
-
-  const directionMultiplier = sort.direction === 'asc' ? 1 : -1
-
-  return [...rows].sort((left, right) => {
-    const leftValue = getServicioSortValue(left, sort.key)
-    const rightValue = getServicioSortValue(right, sort.key)
-    const leftMissing = leftValue === null || leftValue === ''
-    const rightMissing = rightValue === null || rightValue === ''
-
-    if (leftMissing && rightMissing) return (right.created_at ?? '').localeCompare(left.created_at ?? '')
-    if (leftMissing) return 1
-    if (rightMissing) return -1
-
-    const result = typeof leftValue === 'number' && typeof rightValue === 'number'
-      ? leftValue - rightValue
-      : String(leftValue).localeCompare(String(rightValue), 'es', { sensitivity: 'base', numeric: true })
-
-    if (result !== 0) return result * directionMultiplier
-    return (right.created_at ?? '').localeCompare(left.created_at ?? '')
-  })
 }
 
 function getWeekBounds(isoDate: string): { inicio: string; fin: string } {
@@ -334,9 +292,6 @@ export function ServiciosPage() {
   const weeklyExportAbortRef = useRef<AbortController | null>(null)
   const filtros = useFiltrosStore()
   const todayIso = formatLocalIsoDate(new Date())
-  const defaultTableDateRange = useMemo(() => getWeekBounds(todayIso), [todayIso])
-  const activeFechaDesde = filtros.fechaDesde ?? defaultTableDateRange.inicio
-  const activeFechaHasta = filtros.fechaHasta ?? defaultTableDateRange.fin
   const [weeklyReportWeekStart, setWeeklyReportWeekStart] = useState(() => getWeekBounds(todayIso).inicio)
   const deferredSearch = useDeferredValue((filtros.search ?? '').trim().toLowerCase())
   const [statusFilters, setStatusFilters] = useState<ServicioStatus[]>(() => (filtros.status ? [filtros.status] : []))
@@ -347,111 +302,85 @@ export function ServiciosPage() {
   const [servicioAEliminar, setServicioAEliminar] = useState<Servicio | null>(null)
   const weeklyReportWeekOptions = useMemo(() => buildWeeklyReportWeekOptions(todayIso), [todayIso])
   const weeklyReportLabel = getWeeklyReportLabel(weeklyReportWeekStart)
+  const { data: tecnicos = [] } = useTecnicosQuery()
 
   const serviciosQueryFilters = useMemo(() => ({
-    status: statusFilters.length === 1 ? statusFilters[0] : null,
+    statuses: statusFilters,
     tecnicoId: filtros.tecnicoId,
     clienteId: filtros.clienteId,
-    fechaDesde: activeFechaDesde,
-    fechaHasta: activeFechaHasta,
+    fechaDesde: filtros.fechaDesde,
+    fechaHasta: filtros.fechaHasta,
     fechaCampo: dateFilterField,
-    tipoServicio: tipoFilters.length === 1 ? tipoFilters[0] : null,
-    search: filtros.search,
+    tipoServicios: tipoFilters,
+    clasesOrden: claseFilters,
+    search: deferredSearch || null,
   }), [
-    activeFechaDesde,
-    activeFechaHasta,
+    claseFilters,
     dateFilterField,
     filtros.clienteId,
-    filtros.search,
+    filtros.fechaDesde,
+    filtros.fechaHasta,
     filtros.tecnicoId,
+    deferredSearch,
     statusFilters,
     tipoFilters,
   ])
 
-  const { data: servicios = [], isLoading } = useServiciosQuery(serviciosQueryFilters)
+  const sortForQuery: ServiciosListSort | null = sortState
+  const chunkIndex = Math.floor((page - 1) / CHUNK_PAGE_COUNT)
+  const chunkFirstPage = chunkIndex * CHUNK_PAGE_COUNT + 1
+  const chunkStart = chunkIndex * CHUNK_SIZE
+  const chunkEnd = chunkStart + CHUNK_SIZE - 1
+  const { data: serviciosChunk, isLoading } = useServiciosChunkQuery({
+    filters: serviciosQueryFilters,
+    from: chunkStart,
+    to: chunkEnd,
+    sort: sortForQuery,
+  })
+  const emptyServicios = useMemo<Servicio[]>(() => [], [])
+  const servicios = serviciosChunk?.rows ?? emptyServicios
+  const totalServicios = serviciosChunk?.totalCount ?? 0
   const { mutateAsync: eliminarServicioAsync, isPending: eliminandoServicio } = useEliminarServicioMutation()
   const isPageLoading = isLoading
 
   const tipoServicioOptions = useMemo<Array<{ value: TipoServicio; label: string }>>(() => {
-    const values = new Set<TipoServicio>()
+    const values = new Set<TipoServicio>([
+      ...BASE_TIPO_SERVICIO_OPTIONS.map((option) => option.value),
+      ...tipoFilters,
+    ])
     servicios.forEach((servicio) => {
       if (servicio.tipo_servicio) values.add(servicio.tipo_servicio)
     })
     return Array.from(values)
       .sort((left, right) => left.localeCompare(right, 'es', { sensitivity: 'base' }))
       .map((tipo) => ({ value: tipo, label: tipo }))
-  }, [servicios])
+  }, [servicios, tipoFilters])
 
   const claseOrdenOptions = useMemo<Array<{ value: ClaseOrden; label: string }>>(() => {
-    const values = new Set<ClaseOrden>()
+    const values = new Set<ClaseOrden>([
+      ...BASE_CLASE_ORDEN_OPTIONS.map((option) => option.value),
+      ...claseFilters,
+    ])
     servicios.forEach((servicio) => {
       if (servicio.clase_orden) values.add(servicio.clase_orden)
     })
     return Array.from(values)
       .sort((left, right) => left.localeCompare(right, 'es', { sensitivity: 'base' }))
       .map((clase) => ({ value: clase, label: clase }))
-  }, [servicios])
+  }, [claseFilters, servicios])
 
-  const tecnicoOptions = useMemo(() => {
-    const values = new Map<string, string>()
-    servicios.forEach((servicio) => {
-      if (servicio.tecnico_id) {
-        values.set(servicio.tecnico_id, servicio.tecnico?.nombre ?? servicio.tecnico_id)
-      }
-    })
-    return Array.from(values.entries())
-      .map(([id, nombre]) => ({ id, nombre }))
-      .sort((left, right) => left.nombre.localeCompare(right.nombre, 'es', { sensitivity: 'base' }))
-  }, [servicios])
-
-  const filteredServicios = useMemo(() => {
-    return servicios.filter((servicio) => {
-      const matchesStatus = statusFilters.length === 0 || statusFilters.includes(servicio.status)
-      const matchesTipo = tipoFilters.length === 0 || tipoFilters.includes(servicio.tipo_servicio)
-      const matchesClase = claseFilters.length === 0 || (servicio.clase_orden ? claseFilters.includes(servicio.clase_orden) : false)
-      const matchesTecnico = !filtros.tecnicoId || servicio.tecnico_id === filtros.tecnicoId
-      const matchesSearch = !deferredSearch || [
-        servicio.orden?.toString() ?? '',
-        servicio.aviso?.toString() ?? '',
-        servicio.clase_orden ?? '',
-        servicio.tipo_servicio ?? '',
-        servicio.cliente?.codigo_cliente ?? '',
-        servicio.cliente?.nombre ?? '',
-        servicio.cliente?.municipio ?? '',
-        servicio.maquina?.modelo ?? '',
-        servicio.maquina?.serie ?? '',
-        servicio.tecnico?.nombre ?? '',
-      ].some((value) => value.toLowerCase().includes(deferredSearch))
-
-      const fecha = getServicioDateForFilter(servicio, dateFilterField)
-      const matchesDate = isWithinDateBounds(fecha, activeFechaDesde, activeFechaHasta)
-
-      return matchesStatus && matchesTipo && matchesClase && matchesTecnico && matchesSearch && matchesDate
-    })
-  }, [
-    claseFilters,
-    activeFechaDesde,
-    activeFechaHasta,
-    dateFilterField,
-    deferredSearch,
-    filtros.tecnicoId,
-    servicios,
-    statusFilters,
-    tipoFilters,
-  ])
-
-  const sortedServicios = useMemo(() => sortServicios(filteredServicios, sortState), [filteredServicios, sortState])
+  const tecnicoOptions = tecnicos.map((tecnico) => ({ id: tecnico.id, nombre: tecnico.nombre }))
 
   useEffect(() => {
     setPage(1)
   }, [
     claseFilters,
     dateFilterField,
-    activeFechaDesde,
-    activeFechaHasta,
+    filtros.clienteId,
+    filtros.fechaDesde,
+    filtros.fechaHasta,
     filtros.search,
     filtros.tecnicoId,
-    sortedServicios.length,
     sortState,
     statusFilters,
     tipoFilters,
@@ -512,8 +441,8 @@ export function ServiciosPage() {
 
   const handleSetDateRange = (from: string | null, to: string | null) => {
     filtros.setFiltros({
-      fechaDesde: from ?? defaultTableDateRange.inicio,
-      fechaHasta: to ?? from ?? defaultTableDateRange.fin,
+      fechaDesde: from,
+      fechaHasta: to ?? from,
     })
   }
 
@@ -539,8 +468,8 @@ export function ServiciosPage() {
       search: null,
       tecnicoId: null,
       tipoServicio: null,
-      fechaDesde: defaultTableDateRange.inicio,
-      fechaHasta: defaultTableDateRange.fin,
+      fechaDesde: null,
+      fechaHasta: null,
     })
     setStatusFilters([])
     setTipoFilters([])
@@ -571,22 +500,23 @@ export function ServiciosPage() {
     (filtros.search ?? '').trim()
     || filtros.tecnicoId
     || filtros.clienteId
-    || activeFechaDesde !== defaultTableDateRange.inicio
-    || activeFechaHasta !== defaultTableDateRange.fin
+    || filtros.fechaDesde
+    || filtros.fechaHasta
     || dateFilterField !== 'actividad'
     || statusFilters.length > 0
     || tipoFilters.length > 0
     || claseFilters.length > 0,
   )
 
-  const totalPages = Math.max(1, Math.ceil(sortedServicios.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(totalServicios / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
   const start = (currentPage - 1) * PAGE_SIZE
   const end = start + PAGE_SIZE
-  const pageRows = sortedServicios.slice(start, end)
+  const pageOffsetInChunk = Math.max(0, (currentPage - chunkFirstPage) * PAGE_SIZE)
+  const pageRows = servicios.slice(pageOffsetInChunk, pageOffsetInChunk + PAGE_SIZE)
 
   const handleExportListado = async () => {
-    if (sortedServicios.length === 0) {
+    if (totalServicios === 0) {
       toast({
         title: 'Sin datos para exportar',
         description: 'No hay servicios en el listado actual.',
@@ -595,17 +525,17 @@ export function ServiciosPage() {
     }
 
     const periodLabel = (() => {
-      if (activeFechaDesde && activeFechaHasta) {
-        if (activeFechaDesde === activeFechaHasta) {
-          return `Día ${formatDate(activeFechaDesde)}`
+      if (filtros.fechaDesde && filtros.fechaHasta) {
+        if (filtros.fechaDesde === filtros.fechaHasta) {
+          return `Día ${formatDate(filtros.fechaDesde)}`
         }
-        return `Rango ${formatDate(activeFechaDesde)} al ${formatDate(activeFechaHasta)}`
+        return `Rango ${formatDate(filtros.fechaDesde)} al ${formatDate(filtros.fechaHasta)}`
       }
-      if (activeFechaDesde) {
-        return `Desde ${formatDate(activeFechaDesde)}`
+      if (filtros.fechaDesde) {
+        return `Desde ${formatDate(filtros.fechaDesde)}`
       }
-      if (activeFechaHasta) {
-        return `Hasta ${formatDate(activeFechaHasta)}`
+      if (filtros.fechaHasta) {
+        return `Hasta ${formatDate(filtros.fechaHasta)}`
       }
       return 'Todos los registros filtrados'
     })()
@@ -615,15 +545,16 @@ export function ServiciosPage() {
 
     try {
       const { exportServiciosExcel } = await import('@/lib/servicios-export')
+      const serviciosExport = await fetchServiciosForListExport(serviciosQueryFilters, sortForQuery)
       await exportServiciosExcel({
-        servicios: sortedServicios,
+        servicios: serviciosExport,
         filename,
         periodLabel,
       })
 
       toast({
         title: 'Exportación lista',
-        description: `Se generó el Excel con ${sortedServicios.length} servicios.`,
+        description: `Se generó el Excel con ${serviciosExport.length} servicios.`,
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No fue posible generar el archivo.'
@@ -640,17 +571,17 @@ export function ServiciosPage() {
   }
 
   const getSelectedDateRangeLabel = () => {
-    if (activeFechaDesde && activeFechaHasta) {
-      if (activeFechaDesde === activeFechaHasta) return `Fecha de cierre: ${formatDate(activeFechaDesde)}`
-      return `Fecha de cierre: ${formatDate(activeFechaDesde)} - ${formatDate(activeFechaHasta)}`
+    if (filtros.fechaDesde && filtros.fechaHasta) {
+      if (filtros.fechaDesde === filtros.fechaHasta) return `Fecha de cierre: ${formatDate(filtros.fechaDesde)}`
+      return `Fecha de cierre: ${formatDate(filtros.fechaDesde)} - ${formatDate(filtros.fechaHasta)}`
     }
-    if (activeFechaDesde) return `Fecha de cierre desde ${formatDate(activeFechaDesde)}`
-    if (activeFechaHasta) return `Fecha de cierre hasta ${formatDate(activeFechaHasta)}`
+    if (filtros.fechaDesde) return `Fecha de cierre desde ${formatDate(filtros.fechaDesde)}`
+    if (filtros.fechaHasta) return `Fecha de cierre hasta ${formatDate(filtros.fechaHasta)}`
     return 'Selecciona rango de fecha de cierre'
   }
 
   const handleExportCierresReport = async () => {
-    if (!activeFechaDesde || !activeFechaHasta) {
+    if (!filtros.fechaDesde || !filtros.fechaHasta) {
       toast({
         title: 'Selecciona un rango',
         description: 'El reporte de cierres usa la fecha en que se cerró el servicio. Selecciona fecha inicial y final.',
@@ -662,8 +593,8 @@ export function ServiciosPage() {
     try {
       const { exportCierresReport } = await import('@/lib/cierres-export')
       const result = await exportCierresReport({
-        fechaInicio: activeFechaDesde,
-        fechaFin: activeFechaHasta,
+        fechaInicio: filtros.fechaDesde,
+        fechaFin: filtros.fechaHasta,
       })
 
       toast({
@@ -771,7 +702,7 @@ export function ServiciosPage() {
           {isPageLoading ? (
             <Skeleton className="mt-2 h-6 w-56 rounded-full" />
           ) : (
-            <p className="mt-1 text-lg text-ran-slate">{sortedServicios.length} servicios registrados</p>
+            <p className="mt-1 text-lg text-ran-slate">{totalServicios} servicios registrados</p>
           )}
         </div>
 
@@ -961,8 +892,8 @@ export function ServiciosPage() {
                 </Select>
 
                 <DateRangePickerInput
-                  from={activeFechaDesde}
-                  to={activeFechaHasta}
+                  from={filtros.fechaDesde}
+                  to={filtros.fechaHasta}
                   onChange={handleSetDateRange}
                   placeholder="Fechas"
                   allowClear
@@ -994,7 +925,7 @@ export function ServiciosPage() {
             <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wide text-ran-slate">Listado</p>
-                <p className="text-sm font-semibold text-ran-navy">{sortedServicios.length} servicios en la tabla</p>
+                <p className="text-sm font-semibold text-ran-navy">{totalServicios} servicios en la tabla</p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -1139,7 +1070,7 @@ export function ServiciosPage() {
 
           <div className="mt-4 flex flex-col gap-3 text-ran-slate sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm">
-              Mostrando {sortedServicios.length ? start + 1 : 0}-{Math.min(end, sortedServicios.length)} de {sortedServicios.length} servicios
+              Mostrando {totalServicios ? start + 1 : 0}-{Math.min(end, totalServicios)} de {totalServicios} servicios
             </p>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="icon" className="h-9 w-9 rounded-xl" onClick={() => setPage(1)} disabled={currentPage === 1}>
