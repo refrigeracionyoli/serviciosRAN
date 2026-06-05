@@ -13,6 +13,8 @@ import { serviciosKeys } from '@/hooks/use-servicios'
 import { tecnicosKeys } from '@/hooks/use-tecnicos'
 import { supabase } from '@/lib/supabase'
 
+const REALTIME_INVALIDATION_DEBOUNCE_MS = 5000
+
 export function useRealtimeInvalidations() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
@@ -20,13 +22,45 @@ export function useRealtimeInvalidations() {
   useEffect(() => {
     if (!user?.id) return undefined
 
+    const pendingInvalidations = new Map<string, number>()
+    const pendingRefetches = new Map<string, number>()
+
+    const getQueryKeyId = (queryKey: QueryKey) => JSON.stringify(queryKey)
+
+    const scheduleQueryWork = (
+      pendingWork: Map<string, number>,
+      queryKey: QueryKey,
+      run: () => void,
+    ) => {
+      const key = getQueryKeyId(queryKey)
+      const pendingTimeout = pendingWork.get(key)
+      if (pendingTimeout != null) {
+        window.clearTimeout(pendingTimeout)
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        pendingWork.delete(key)
+        run()
+      }, REALTIME_INVALIDATION_DEBOUNCE_MS)
+
+      pendingWork.set(key, timeoutId)
+    }
+
     const invalidateActive = (queryKey: QueryKey) => {
-      void queryClient.invalidateQueries({ queryKey, refetchType: 'active' })
+      scheduleQueryWork(pendingInvalidations, queryKey, () => {
+        void queryClient.invalidateQueries({ queryKey, refetchType: 'active' })
+      })
+    }
+
+    const refetchActive = (queryKey: QueryKey) => {
+      scheduleQueryWork(pendingRefetches, queryKey, () => {
+        void queryClient.refetchQueries({ queryKey, type: 'active' })
+      })
     }
 
     const invalidateInventario = () => {
       invalidateActive(inventarioKeys.all)
-      void queryClient.refetchQueries({ queryKey: inventarioKeys.tecnicoRoot, type: 'active' })
+      refetchActive(inventarioKeys.tecnicoRoot)
     }
 
     const invalidateServicios = () => {
@@ -115,6 +149,8 @@ export function useRealtimeInvalidations() {
       .subscribe()
 
     return () => {
+      pendingInvalidations.forEach((timeoutId) => window.clearTimeout(timeoutId))
+      pendingRefetches.forEach((timeoutId) => window.clearTimeout(timeoutId))
       void supabase.removeChannel(channel)
     }
   }, [queryClient, user?.id])

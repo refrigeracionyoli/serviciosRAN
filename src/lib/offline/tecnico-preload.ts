@@ -11,7 +11,7 @@ import { formatLocalIsoDate } from '@/lib/utils'
 import type { RefaccionInput } from '@/schemas/inventario.schema'
 import type { Evidencia, InventarioTecnico, ItemInventario, Servicio } from '@/types/domain.types'
 
-const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 10
+const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 60
 const INVENTARIO_TECNICO_PAGE_SIZE = 250
 
 const SELECT_SERVICIO = `

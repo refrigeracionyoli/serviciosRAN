@@ -243,6 +243,10 @@ function getFunctionErrorMessage(functionName: string, responseText?: string): s
   return `${base} ${deployHint}`
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
 /**
  * Sube un archivo de evidencia a Cloudflare R2 a través de la Edge Function r2-upload.
  * La subida ocurre server-side — el browser nunca contacta R2 directamente (sin CORS).
@@ -297,6 +301,22 @@ export async function downloadEvidenciaBlob(
   r2Key: string,
   options?: { signal?: AbortSignal },
 ): Promise<Blob> {
+  try {
+    const { downloadUrl } = await getPresignedGetUrl(r2Key, options)
+    const response = await fetch(downloadUrl, {
+      signal: options?.signal,
+      cache: 'force-cache',
+    })
+
+    if (!response.ok) {
+      throw new Error(`Error al descargar evidencia desde R2 (${response.status}).`)
+    }
+
+    return await response.blob()
+  } catch (error) {
+    if (isAbortError(error)) throw error
+  }
+
   return invokeBlobFunctionWithAuthRetry('r2-presigned-get', {
     r2Key,
     download: true,

@@ -11,7 +11,7 @@ import { hydrateTecnicoOfflineQueryCache } from '@/lib/offline/tecnico-query-hyd
 import { hasTecnicoPreloadState } from '@/lib/offline/tecnico-preload-state'
 import { formatLocalIsoDate } from '@/lib/utils'
 
-const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 15
+const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60
 const PRELOAD_BOOTSTRAP_RETRY_INTERVAL_MS = 5000
 const PRELOAD_INITIAL_DELAY_MS = 240
 

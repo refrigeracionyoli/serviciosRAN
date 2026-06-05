@@ -23,6 +23,7 @@ const NS = {
 
 const WEEKLY_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-semanal-2026.xlsx`
 const EVIDENCE_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-evidencias-os.xlsx`
+const TEMPLATE_CACHE_NAME = 'ran-report-templates-v1'
 const TEMPLATE_FETCH_CACHE = new Map<string, Promise<ArrayBuffer>>()
 const XML_DECODER = new TextDecoder('utf-8')
 const XML_ENCODER = new TextEncoder()
@@ -1223,24 +1224,53 @@ function ensureWeeklyResumenStyles(files: Record<string, Uint8Array>): ResumenSt
   }
 }
 
+function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
+  return buffer.slice(0)
+}
+
+async function fetchTemplateArrayBuffer(url: string): Promise<ArrayBuffer> {
+  let persistentCache: Cache | null = null
+
+  if (typeof caches !== 'undefined') {
+    try {
+      persistentCache = await caches.open(TEMPLATE_CACHE_NAME)
+      const cached = await persistentCache.match(url)
+      if (cached?.ok) {
+        return cached.arrayBuffer()
+      }
+    } catch {
+      persistentCache = null
+    }
+  }
+
+  const response = await fetch(url, { cache: 'force-cache' })
+  if (!response.ok) {
+    throw new Error(`No se pudo cargar la plantilla ${url} (${response.status}).`)
+  }
+
+  if (persistentCache) {
+    try {
+      await persistentCache.put(url, response.clone())
+    } catch {
+      // La plantilla sigue disponible por la respuesta de red aunque falle Cache Storage.
+    }
+  }
+
+  return response.arrayBuffer()
+}
+
 function loadTemplateArrayBuffer(url: string): Promise<ArrayBuffer> {
   const cached = TEMPLATE_FETCH_CACHE.get(url)
-  if (cached) return cached
+  if (cached) return cached.then(cloneArrayBuffer)
 
-  const promise = fetch(url)
-    .then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`No se pudo cargar la plantilla ${url} (${response.status}).`)
-      }
-      return response.arrayBuffer()
-    })
+  const promise = fetchTemplateArrayBuffer(url)
     .catch((error: unknown) => {
       TEMPLATE_FETCH_CACHE.delete(url)
       throw error
     })
 
   TEMPLATE_FETCH_CACHE.set(url, promise)
-  return promise
+  return promise.then(cloneArrayBuffer)
 }
 
 function toLookupCellValue(value: unknown): string | number {
