@@ -53,11 +53,10 @@ import { useToast } from '@/hooks/use-toast'
 import { useFiltrosStore } from '@/stores/filtros.store'
 import { formatDate, formatMXN, formatWeek } from '@/lib/utils'
 import type { WeeklyReportExportContentMode, WeeklyReportExportMode, WeeklyReportProgress } from '@/lib/reportes-export'
-import type { ClaseOrden, Servicio, ServicioStatus, TipoServicio } from '@/types/domain.types'
+import type { ClaseOrden, Servicio, ServicioDateFilterField, ServicioStatus, TipoServicio } from '@/types/domain.types'
 
 const PAGE_SIZE = 10
 
-type DateFilterField = 'servicio' | 'solicitud' | 'actividad'
 type SortDirection = 'asc' | 'desc'
 type ServicioSortKey = 'fecha_solicitud' | 'fecha_servicio' | 'fecha_cierre' | 'status' | 'tipo_servicio' | 'clase_orden'
 
@@ -88,7 +87,7 @@ const STATUS_FILTER_OPTIONS: StatusFilterOption[] = [
   { value: 'cerrado', label: 'Cerrado' },
 ]
 
-const DATE_FIELD_OPTIONS: Array<{ value: DateFilterField; label: string }> = [
+const DATE_FIELD_OPTIONS: Array<{ value: ServicioDateFilterField; label: string }> = [
   { value: 'actividad', label: 'Servicio o solicitud' },
   { value: 'servicio', label: 'Fecha servicio' },
   { value: 'solicitud', label: 'Fecha solicitud' },
@@ -176,7 +175,7 @@ function isWithinDateBounds(fecha: string | null, desde: string | null, hasta: s
   return true
 }
 
-function getServicioDateForFilter(servicio: Servicio, field: DateFilterField): string | null {
+function getServicioDateForFilter(servicio: Servicio, field: ServicioDateFilterField): string | null {
   if (field === 'servicio') return servicio.fecha_servicio
   if (field === 'solicitud') return servicio.fecha_solicitud
   return servicio.fecha_servicio ?? servicio.fecha_solicitud
@@ -335,18 +334,41 @@ export function ServiciosPage() {
   const weeklyExportAbortRef = useRef<AbortController | null>(null)
   const filtros = useFiltrosStore()
   const todayIso = formatLocalIsoDate(new Date())
+  const defaultTableDateRange = useMemo(() => getWeekBounds(todayIso), [todayIso])
+  const activeFechaDesde = filtros.fechaDesde ?? defaultTableDateRange.inicio
+  const activeFechaHasta = filtros.fechaHasta ?? defaultTableDateRange.fin
   const [weeklyReportWeekStart, setWeeklyReportWeekStart] = useState(() => getWeekBounds(todayIso).inicio)
   const deferredSearch = useDeferredValue((filtros.search ?? '').trim().toLowerCase())
   const [statusFilters, setStatusFilters] = useState<ServicioStatus[]>(() => (filtros.status ? [filtros.status] : []))
   const [tipoFilters, setTipoFilters] = useState<TipoServicio[]>(() => (filtros.tipoServicio ? [filtros.tipoServicio] : []))
   const [claseFilters, setClaseFilters] = useState<ClaseOrden[]>([])
-  const [dateFilterField, setDateFilterField] = useState<DateFilterField>('actividad')
+  const [dateFilterField, setDateFilterField] = useState<ServicioDateFilterField>('actividad')
   const [sortState, setSortState] = useState<ServicioSortState | null>(null)
   const [servicioAEliminar, setServicioAEliminar] = useState<Servicio | null>(null)
   const weeklyReportWeekOptions = useMemo(() => buildWeeklyReportWeekOptions(todayIso), [todayIso])
   const weeklyReportLabel = getWeeklyReportLabel(weeklyReportWeekStart)
 
-  const { data: servicios = [], isLoading } = useServiciosQuery()
+  const serviciosQueryFilters = useMemo(() => ({
+    status: statusFilters.length === 1 ? statusFilters[0] : null,
+    tecnicoId: filtros.tecnicoId,
+    clienteId: filtros.clienteId,
+    fechaDesde: activeFechaDesde,
+    fechaHasta: activeFechaHasta,
+    fechaCampo: dateFilterField,
+    tipoServicio: tipoFilters.length === 1 ? tipoFilters[0] : null,
+    search: filtros.search,
+  }), [
+    activeFechaDesde,
+    activeFechaHasta,
+    dateFilterField,
+    filtros.clienteId,
+    filtros.search,
+    filtros.tecnicoId,
+    statusFilters,
+    tipoFilters,
+  ])
+
+  const { data: servicios = [], isLoading } = useServiciosQuery(serviciosQueryFilters)
   const { mutateAsync: eliminarServicioAsync, isPending: eliminandoServicio } = useEliminarServicioMutation()
   const isPageLoading = isLoading
 
@@ -402,16 +424,16 @@ export function ServiciosPage() {
       ].some((value) => value.toLowerCase().includes(deferredSearch))
 
       const fecha = getServicioDateForFilter(servicio, dateFilterField)
-      const matchesDate = isWithinDateBounds(fecha, filtros.fechaDesde, filtros.fechaHasta)
+      const matchesDate = isWithinDateBounds(fecha, activeFechaDesde, activeFechaHasta)
 
       return matchesStatus && matchesTipo && matchesClase && matchesTecnico && matchesSearch && matchesDate
     })
   }, [
     claseFilters,
+    activeFechaDesde,
+    activeFechaHasta,
     dateFilterField,
     deferredSearch,
-    filtros.fechaDesde,
-    filtros.fechaHasta,
     filtros.tecnicoId,
     servicios,
     statusFilters,
@@ -425,8 +447,8 @@ export function ServiciosPage() {
   }, [
     claseFilters,
     dateFilterField,
-    filtros.fechaDesde,
-    filtros.fechaHasta,
+    activeFechaDesde,
+    activeFechaHasta,
     filtros.search,
     filtros.tecnicoId,
     sortedServicios.length,
@@ -490,8 +512,8 @@ export function ServiciosPage() {
 
   const handleSetDateRange = (from: string | null, to: string | null) => {
     filtros.setFiltros({
-      fechaDesde: from,
-      fechaHasta: to ?? from,
+      fechaDesde: from ?? defaultTableDateRange.inicio,
+      fechaHasta: to ?? from ?? defaultTableDateRange.fin,
     })
   }
 
@@ -517,8 +539,8 @@ export function ServiciosPage() {
       search: null,
       tecnicoId: null,
       tipoServicio: null,
-      fechaDesde: null,
-      fechaHasta: null,
+      fechaDesde: defaultTableDateRange.inicio,
+      fechaHasta: defaultTableDateRange.fin,
     })
     setStatusFilters([])
     setTipoFilters([])
@@ -548,8 +570,10 @@ export function ServiciosPage() {
   const hasActiveFilters = Boolean(
     (filtros.search ?? '').trim()
     || filtros.tecnicoId
-    || filtros.fechaDesde
-    || filtros.fechaHasta
+    || filtros.clienteId
+    || activeFechaDesde !== defaultTableDateRange.inicio
+    || activeFechaHasta !== defaultTableDateRange.fin
+    || dateFilterField !== 'actividad'
     || statusFilters.length > 0
     || tipoFilters.length > 0
     || claseFilters.length > 0,
@@ -571,17 +595,17 @@ export function ServiciosPage() {
     }
 
     const periodLabel = (() => {
-      if (filtros.fechaDesde && filtros.fechaHasta) {
-        if (filtros.fechaDesde === filtros.fechaHasta) {
-          return `Día ${formatDate(filtros.fechaDesde)}`
+      if (activeFechaDesde && activeFechaHasta) {
+        if (activeFechaDesde === activeFechaHasta) {
+          return `Día ${formatDate(activeFechaDesde)}`
         }
-        return `Rango ${formatDate(filtros.fechaDesde)} al ${formatDate(filtros.fechaHasta)}`
+        return `Rango ${formatDate(activeFechaDesde)} al ${formatDate(activeFechaHasta)}`
       }
-      if (filtros.fechaDesde) {
-        return `Desde ${formatDate(filtros.fechaDesde)}`
+      if (activeFechaDesde) {
+        return `Desde ${formatDate(activeFechaDesde)}`
       }
-      if (filtros.fechaHasta) {
-        return `Hasta ${formatDate(filtros.fechaHasta)}`
+      if (activeFechaHasta) {
+        return `Hasta ${formatDate(activeFechaHasta)}`
       }
       return 'Todos los registros filtrados'
     })()
@@ -616,17 +640,17 @@ export function ServiciosPage() {
   }
 
   const getSelectedDateRangeLabel = () => {
-    if (filtros.fechaDesde && filtros.fechaHasta) {
-      if (filtros.fechaDesde === filtros.fechaHasta) return `Fecha de cierre: ${formatDate(filtros.fechaDesde)}`
-      return `Fecha de cierre: ${formatDate(filtros.fechaDesde)} - ${formatDate(filtros.fechaHasta)}`
+    if (activeFechaDesde && activeFechaHasta) {
+      if (activeFechaDesde === activeFechaHasta) return `Fecha de cierre: ${formatDate(activeFechaDesde)}`
+      return `Fecha de cierre: ${formatDate(activeFechaDesde)} - ${formatDate(activeFechaHasta)}`
     }
-    if (filtros.fechaDesde) return `Fecha de cierre desde ${formatDate(filtros.fechaDesde)}`
-    if (filtros.fechaHasta) return `Fecha de cierre hasta ${formatDate(filtros.fechaHasta)}`
+    if (activeFechaDesde) return `Fecha de cierre desde ${formatDate(activeFechaDesde)}`
+    if (activeFechaHasta) return `Fecha de cierre hasta ${formatDate(activeFechaHasta)}`
     return 'Selecciona rango de fecha de cierre'
   }
 
   const handleExportCierresReport = async () => {
-    if (!filtros.fechaDesde || !filtros.fechaHasta) {
+    if (!activeFechaDesde || !activeFechaHasta) {
       toast({
         title: 'Selecciona un rango',
         description: 'El reporte de cierres usa la fecha en que se cerró el servicio. Selecciona fecha inicial y final.',
@@ -638,8 +662,8 @@ export function ServiciosPage() {
     try {
       const { exportCierresReport } = await import('@/lib/cierres-export')
       const result = await exportCierresReport({
-        fechaInicio: filtros.fechaDesde,
-        fechaFin: filtros.fechaHasta,
+        fechaInicio: activeFechaDesde,
+        fechaFin: activeFechaHasta,
       })
 
       toast({
@@ -925,7 +949,7 @@ export function ServiciosPage() {
 
             <div className="mt-3 flex flex-col gap-3 xl:flex-row xl:items-center">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-[13rem_minmax(16rem,1fr)] xl:min-w-[33rem]">
-                <Select value={dateFilterField} onValueChange={(value) => setDateFilterField(value as DateFilterField)}>
+                <Select value={dateFilterField} onValueChange={(value) => setDateFilterField(value as ServicioDateFilterField)}>
                   <SelectTrigger className="h-11 rounded-xl border-slate-200">
                     <SelectValue placeholder="Fecha" />
                   </SelectTrigger>
@@ -937,8 +961,8 @@ export function ServiciosPage() {
                 </Select>
 
                 <DateRangePickerInput
-                  from={filtros.fechaDesde}
-                  to={filtros.fechaHasta}
+                  from={activeFechaDesde}
+                  to={activeFechaHasta}
                   onChange={handleSetDateRange}
                   placeholder="Fechas"
                   allowClear

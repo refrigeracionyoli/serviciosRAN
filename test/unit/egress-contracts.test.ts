@@ -52,4 +52,20 @@ describe('egress reduction contracts', () => {
     expect(realtimeHook).toContain("queryClient.invalidateQueries({ queryKey, refetchType: 'active' })")
     expect(realtimeHook).toContain("queryClient.refetchQueries({ queryKey, type: 'active' })")
   })
+
+  it('keeps the servicios admin table bounded by a server-side date filter by default', () => {
+    const serviciosPage = read('src/pages/admin/servicios/ServiciosPage.tsx')
+    const serviciosHook = read('src/hooks/use-servicios.ts')
+
+    expect(serviciosPage).toContain('const defaultTableDateRange = useMemo(() => getWeekBounds(todayIso), [todayIso])')
+    expect(serviciosPage).toContain('const activeFechaDesde = filtros.fechaDesde ?? defaultTableDateRange.inicio')
+    expect(serviciosPage).toContain('const activeFechaHasta = filtros.fechaHasta ?? defaultTableDateRange.fin')
+    expect(serviciosPage).toContain('const serviciosQueryFilters = useMemo(() => ({')
+    expect(serviciosPage).toContain('const { data: servicios = [], isLoading } = useServiciosQuery(serviciosQueryFilters)')
+    expect(serviciosPage).not.toContain('const { data: servicios = [], isLoading } = useServiciosQuery()')
+
+    expect(serviciosHook).toContain("fechaCampo: filtros?.fechaCampo ?? 'servicio'")
+    expect(serviciosHook).toContain("normalizedFilters.fechaCampo === 'actividad'")
+    expect(serviciosHook).toContain("query = query.or(`and(${servicioConditions.join(',')}),and(${solicitudConditions.join(',')})`)")
+  })
 })

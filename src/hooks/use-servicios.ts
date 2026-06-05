@@ -34,7 +34,15 @@ import {
 import { settleQueuedCommand } from '@/lib/offline/sync-engine'
 import type { RefaccionInput } from '@/schemas/inventario.schema'
 import { buildServicioCompletionRequirementMessage, summarizeServicioEvidencias } from '@/lib/tecnico/servicio-evidencias'
-import type { Evidencia, RefaccionInventorySource, Servicio, FiltrosServicio, ServicioRefaccion, ServicioStatus } from '@/types/domain.types'
+import type {
+  Evidencia,
+  RefaccionInventorySource,
+  Servicio,
+  FiltrosServicio,
+  ServicioDateFilterField,
+  ServicioRefaccion,
+  ServicioStatus,
+} from '@/types/domain.types'
 import type { CrearServicioInput, EditarServicioInput } from '@/schemas/servicio.schema'
 import { inventarioKeys } from './use-inventario'
 import { maquinasKeys } from './use-maquinas'
@@ -46,6 +54,7 @@ interface NormalizedServiciosListFilters {
   clienteId: number | null
   fechaDesde: string | null
   fechaHasta: string | null
+  fechaCampo: ServicioDateFilterField
   tipoServicio: FiltrosServicio['tipoServicio']
   search: string | null
 }
@@ -63,11 +72,22 @@ export function normalizeServiciosListFilters(
     clienteId: filtros?.clienteId ?? null,
     fechaDesde: filtros?.fechaDesde ?? null,
     fechaHasta: filtros?.fechaHasta ?? null,
+    fechaCampo: filtros?.fechaCampo ?? 'servicio',
     tipoServicio: filtros?.tipoServicio ?? null,
     search: filtros?.search?.trim() || null,
   }
 
-  return Object.values(normalized).some((value) => value != null && value !== '')
+  const hasActiveFilter = Boolean(
+    normalized.status
+    || normalized.tecnicoId
+    || normalized.clienteId
+    || normalized.fechaDesde
+    || normalized.fechaHasta
+    || normalized.tipoServicio
+    || normalized.search,
+  )
+
+  return hasActiveFilter
     ? normalized
     : null
 }
@@ -108,6 +128,12 @@ function compareServiciosByCreatedAtDesc(left: Servicio, right: Servicio) {
   return right.created_at.localeCompare(left.created_at)
 }
 
+function getServicioDateForFilter(servicio: Servicio, field: ServicioDateFilterField): string | null {
+  if (field === 'servicio') return servicio.fecha_servicio
+  if (field === 'solicitud') return servicio.fecha_solicitud
+  return servicio.fecha_servicio ?? servicio.fecha_solicitud
+}
+
 function matchesServicioListFilters(
   servicio: Servicio,
   filtros: NormalizedServiciosListFilters | null | undefined,
@@ -116,8 +142,9 @@ function matchesServicioListFilters(
   if (filtros.status && servicio.status !== filtros.status) return false
   if (filtros.tecnicoId && servicio.tecnico_id !== filtros.tecnicoId) return false
   if (filtros.clienteId && servicio.cliente_id !== filtros.clienteId) return false
-  if (filtros.fechaDesde && (!servicio.fecha_servicio || servicio.fecha_servicio < filtros.fechaDesde)) return false
-  if (filtros.fechaHasta && (!servicio.fecha_servicio || servicio.fecha_servicio > filtros.fechaHasta)) return false
+  const fecha = getServicioDateForFilter(servicio, filtros.fechaCampo)
+  if (filtros.fechaDesde && (!fecha || fecha < filtros.fechaDesde)) return false
+  if (filtros.fechaHasta && (!fecha || fecha > filtros.fechaHasta)) return false
   if (filtros.tipoServicio && servicio.tipo_servicio !== filtros.tipoServicio) return false
 
   if (filtros.search) {
@@ -303,8 +330,29 @@ export function useServiciosQuery(filtros?: FiltrosServicio, options?: Servicios
             if (normalizedFilters?.status) query = query.eq('status', normalizedFilters.status)
             if (normalizedFilters?.tecnicoId) query = query.eq('tecnico_id', normalizedFilters.tecnicoId)
             if (normalizedFilters?.clienteId) query = query.eq('cliente_id', normalizedFilters.clienteId)
-            if (normalizedFilters?.fechaDesde) query = query.gte('fecha_servicio', normalizedFilters.fechaDesde)
-            if (normalizedFilters?.fechaHasta) query = query.lte('fecha_servicio', normalizedFilters.fechaHasta)
+            if (normalizedFilters?.fechaDesde || normalizedFilters?.fechaHasta) {
+              if (normalizedFilters.fechaCampo === 'solicitud') {
+                if (normalizedFilters.fechaDesde) query = query.gte('fecha_solicitud', normalizedFilters.fechaDesde)
+                if (normalizedFilters.fechaHasta) query = query.lte('fecha_solicitud', normalizedFilters.fechaHasta)
+              } else if (normalizedFilters.fechaCampo === 'actividad') {
+                const servicioConditions: string[] = []
+                const solicitudConditions: string[] = ['fecha_servicio.is.null']
+
+                if (normalizedFilters.fechaDesde) {
+                  servicioConditions.push(`fecha_servicio.gte.${normalizedFilters.fechaDesde}`)
+                  solicitudConditions.push(`fecha_solicitud.gte.${normalizedFilters.fechaDesde}`)
+                }
+                if (normalizedFilters.fechaHasta) {
+                  servicioConditions.push(`fecha_servicio.lte.${normalizedFilters.fechaHasta}`)
+                  solicitudConditions.push(`fecha_solicitud.lte.${normalizedFilters.fechaHasta}`)
+                }
+
+                query = query.or(`and(${servicioConditions.join(',')}),and(${solicitudConditions.join(',')})`)
+              } else {
+                if (normalizedFilters.fechaDesde) query = query.gte('fecha_servicio', normalizedFilters.fechaDesde)
+                if (normalizedFilters.fechaHasta) query = query.lte('fecha_servicio', normalizedFilters.fechaHasta)
+              }
+            }
             if (normalizedFilters?.tipoServicio) query = query.eq('tipo_servicio', normalizedFilters.tipoServicio)
 
             return query.range(from, to)

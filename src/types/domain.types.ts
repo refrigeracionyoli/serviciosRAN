@@ -6,6 +6,8 @@ export type UserRole = 'admin' | 'tecnico'
 
 export type ServicioStatus = 'pendiente' | 'en_ruta' | 'completado' | 'cerrado'
 
+export type ServicioDateFilterField = 'servicio' | 'solicitud' | 'actividad'
+
 export type TipoServicio =
   | 'MTTO CORRECTIVO RUTA'
   | 'MTTO CORRECTIVO PISO'
@@ -299,6 +301,7 @@ export interface FiltrosServicio {
   clienteId?: number | null
   fechaDesde?: string | null
   fechaHasta?: string | null
+  fechaCampo?: ServicioDateFilterField | null
   tipoServicio?: TipoServicio | null
   search?: string | null
 }
