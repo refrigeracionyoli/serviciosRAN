@@ -798,7 +798,34 @@ export async function syncRegistrarReubicacionTaller(
 
   if (existingMovementError) throw existingMovementError
 
+  let movement = existingMovement as MaquinaTallerMovimiento | null
+
   if (maquinaActual.cliente_id === remoteClienteDestinoId) {
+    if (!movement && payload.previousClienteId !== remoteClienteDestinoId) {
+      const { data: userData } = await supabase.auth.getUser()
+      const usuarioId = userData.user?.id ?? null
+      const { data: createdMovement, error: movementError } = await supabase
+        .from('maquinas_taller_movimientos')
+        .insert({
+          maquina_id: remoteMaquinaId,
+          maquina_taller_id: null,
+          servicio_id: null,
+          orden_servicio: null,
+          accion: 'reubicacion',
+          motivo: 'reubicacion',
+          origen: payload.previousClienteId ? `cliente:${String(payload.previousClienteId)}` : 'sin_cliente',
+          destino,
+          detalle: toNullableText(payload.input.detalle),
+          fecha_movimiento: payload.input.fecha_movimiento,
+          usuario_id: usuarioId,
+        })
+        .select(SELECT_MOVIMIENTOS_TALLER)
+        .single()
+
+      if (movementError) throw movementError
+      movement = createdMovement as MaquinaTallerMovimiento
+    }
+
     const { data: syncedMaquina } = await supabase
       .from('maquinas')
       .select(SELECT_MAQUINA)
@@ -807,10 +834,10 @@ export async function syncRegistrarReubicacionTaller(
 
     await Promise.all([
       syncedMaquina ? upsertCachedMaquinas(ownerId, [syncedMaquina]) : Promise.resolve(),
-      existingMovement
+      movement
         ? Promise.all([
-            upsertEntityLink(ownerId, 'maquina_taller_movimiento', payload.localMovementId, existingMovement.id),
-            upsertCachedMaquinasTallerMovimientos(ownerId, [existingMovement as MaquinaTallerMovimiento]),
+            upsertEntityLink(ownerId, 'maquina_taller_movimiento', payload.localMovementId, movement.id),
+            upsertCachedMaquinasTallerMovimientos(ownerId, [movement]),
           ])
         : Promise.resolve(),
     ])
@@ -857,8 +884,6 @@ export async function syncRegistrarReubicacionTaller(
 
     throw updateTallerError
   }
-
-  let movement = existingMovement as MaquinaTallerMovimiento | null
 
   if (!movement) {
     const { data: userData } = await supabase.auth.getUser()

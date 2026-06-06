@@ -89,6 +89,19 @@ describe('database and edge-function contracts', () => {
     expect(lifecycle).toContain('fecha_instalacion = coalesce(new.fecha_servicio, fecha_instalacion)')
   })
 
+  it('repairs missing workshop lifecycle movement when completed services are closed', () => {
+    const lifecycleRepair = read('supabase/migrations/032_repair_terminal_workshop_lifecycle.sql')
+
+    expect(lifecycleRepair).toContain("old.status = 'completado' and new.status = 'cerrado'")
+    expect(lifecycleRepair).toContain("and accion = 'entrada'")
+    expect(lifecycleRepair).toContain("and motivo = 'retiro'")
+    expect(lifecycleRepair).toContain("and accion = 'salida'")
+    expect(lifecycleRepair).toContain("and motivo = 'instalacion'")
+    expect(lifecycleRepair).toContain('if v_existing_mov is not null then')
+    expect(lifecycleRepair).toContain("status = 'operando'")
+    expect(lifecycleRepair).toContain("status = 'en_taller'")
+  })
+
   it('publishes all realtime tables used by query invalidation hooks', () => {
     for (const table of [
       'servicios',

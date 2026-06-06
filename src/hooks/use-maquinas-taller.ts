@@ -7,14 +7,16 @@ import {
   queueRegistrarEntradaTaller,
   queueRegistrarReubicacionTaller,
   queueRegistrarSalidaTaller,
+  syncRegistrarReubicacionTaller,
 } from '@/lib/offline/taller-actions'
 import {
+  createLocalNumberId,
   getCachedMaquinasTallerMovimientosSnapshot,
   getCachedMaquinasTallerSnapshot,
   getCachedServiciosSnapshot,
   isLocalNumberId,
-  upsertCachedMaquinasTaller,
-  upsertCachedMaquinasTallerMovimientos,
+  replaceCachedMaquinasTallerMovimientosSnapshot,
+  replaceCachedMaquinasTallerSnapshot,
   upsertCachedServicios,
 } from '@/lib/offline/cache'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
@@ -171,7 +173,7 @@ export function useMaquinasEnTallerQuery(options?: MaquinasEnTallerQueryOptions)
 
           const { data, error } = await query
           if (error) throw error
-          await upsertCachedMaquinasTaller(ownerId, data as MaquinaEnTaller[])
+          await replaceCachedMaquinasTallerSnapshot(ownerId, data as MaquinaEnTaller[], { soloAbiertas })
           return getCachedMaquinasTallerSnapshot(ownerId, { soloAbiertas })
         },
         local: () => getCachedMaquinasTallerSnapshot(ownerId, { soloAbiertas }),
@@ -217,7 +219,9 @@ export function useMaquinaTallerMovimientosQuery(
 
           const { data, error } = await query
           if (error) throw error
-          await upsertCachedMaquinasTallerMovimientos(ownerId, data as MaquinaTallerMovimiento[])
+          await replaceCachedMaquinasTallerMovimientosSnapshot(ownerId, data as MaquinaTallerMovimiento[], {
+            maquinaId: maquinaId ?? undefined,
+          })
           return getCachedMaquinasTallerMovimientosSnapshot(ownerId, maquinaId ?? undefined)
         },
         local: () => getCachedMaquinasTallerMovimientosSnapshot(ownerId, maquinaId ?? undefined),
@@ -582,9 +586,12 @@ export function useEliminarMaquinaTallerMutation() {
         .from('maquinas_en_taller')
         .select('id, maquina_id, cliente_id, fecha_salida, status')
         .eq('id', input.registro_id)
-        .single()
+        .maybeSingle()
 
       if (registroError) throw registroError
+      if (!registro) {
+        return input.registro_id
+      }
 
       if (registro.fecha_salida) {
         throw new Error('Solo se pueden quitar registros abiertos de taller.')
@@ -673,52 +680,12 @@ export function useRegistrarReubicacionTallerMutation() {
             .single()
 
           if (maquinaError) throw maquinaError
-          if (maquina.cliente_id === input.cliente_destino_id) {
-            return input.maquina_id
-          }
-
-          const { error: updateError } = await supabase
-            .from('maquinas')
-            .update({ cliente_id: input.cliente_destino_id })
-            .eq('id', input.maquina_id)
-
-          if (updateError) throw updateError
-
-          await supabase
-            .from('maquinas_en_taller')
-            .update({ cliente_id: input.cliente_destino_id })
-            .eq('maquina_id', input.maquina_id)
-            .is('fecha_salida', null)
-
-          const { data: userData } = await supabase.auth.getUser()
-          const usuarioId = userData.user?.id ?? null
-
-          const { error: movementError } = await supabase
-            .from('maquinas_taller_movimientos')
-            .insert({
-              maquina_id: input.maquina_id,
-              maquina_taller_id: null,
-              servicio_id: null,
-              orden_servicio: null,
-              accion: 'reubicacion',
-              motivo: 'reubicacion',
-              origen: maquina.cliente_id ? `cliente:${String(maquina.cliente_id)}` : 'sin_cliente',
-              destino: `cliente:${String(input.cliente_destino_id)}`,
-              detalle: toNullableText(input.detalle),
-              fecha_movimiento: input.fecha_movimiento,
-              usuario_id: usuarioId,
-            })
-
-          if (movementError) {
-            await supabase
-              .from('maquinas')
-              .update({ cliente_id: maquina.cliente_id })
-              .eq('id', input.maquina_id)
-
-            throw movementError
-          }
-
-          return input.maquina_id
+          return syncRegistrarReubicacionTaller(ownerId, {
+            maquinaId: input.maquina_id,
+            localMovementId: createLocalNumberId(),
+            previousClienteId: maquina.cliente_id ?? null,
+            input,
+          })
         } catch (error) {
           if (!(error instanceof Error && error.message === 'OFFLINE_LOCAL_REFS') && !isLikelyNetworkError(error)) {
             throw error

@@ -1229,6 +1229,30 @@ export async function upsertCachedMaquinasTaller(ownerId: string, rows: MaquinaE
   )
 }
 
+export async function replaceCachedMaquinasTallerSnapshot(
+  ownerId: string,
+  rows: MaquinaEnTaller[],
+  options?: { soloAbiertas?: boolean; maquinaId?: number },
+) {
+  const remoteIds = new Set(rows.map((row) => row.id))
+  if (rows.length > 0) {
+    await upsertCachedMaquinasTaller(ownerId, rows)
+  }
+
+  const soloAbiertas = Boolean(options?.soloAbiertas)
+  const cachedRows = await offlineDb.maquinasTaller.where('ownerId').equals(ownerId).toArray()
+  const staleKeys = cachedRows
+    .filter((row) => !isLocalNumberId(row.id))
+    .filter((row) => (soloAbiertas ? row.fecha_salida === null : true))
+    .filter((row) => (options?.maquinaId ? row.maquina_id === options.maquinaId : true))
+    .filter((row) => !remoteIds.has(row.id))
+    .map((row) => row.cacheKey)
+
+  if (staleKeys.length > 0) {
+    await offlineDb.maquinasTaller.bulkDelete(staleKeys)
+  }
+}
+
 export async function getCachedMaquinasTallerSnapshot(
   ownerId: string,
   options?: { soloAbiertas?: boolean },
@@ -1292,6 +1316,28 @@ export async function upsertCachedMaquinasTallerMovimientos(ownerId: string, row
       cachedAt,
     })),
   )
+}
+
+export async function replaceCachedMaquinasTallerMovimientosSnapshot(
+  ownerId: string,
+  rows: MaquinaTallerMovimiento[],
+  options?: { maquinaId?: number },
+) {
+  const remoteIds = new Set(rows.map((row) => row.id))
+  if (rows.length > 0) {
+    await upsertCachedMaquinasTallerMovimientos(ownerId, rows)
+  }
+
+  const cachedRows = await offlineDb.maquinasTallerMovimientos.where('ownerId').equals(ownerId).toArray()
+  const staleKeys = cachedRows
+    .filter((row) => !isLocalNumberId(row.id))
+    .filter((row) => (options?.maquinaId ? row.maquina_id === options.maquinaId : true))
+    .filter((row) => !remoteIds.has(row.id))
+    .map((row) => row.cacheKey)
+
+  if (staleKeys.length > 0) {
+    await offlineDb.maquinasTallerMovimientos.bulkDelete(staleKeys)
+  }
 }
 
 export async function getCachedMaquinasTallerMovimientosSnapshot(

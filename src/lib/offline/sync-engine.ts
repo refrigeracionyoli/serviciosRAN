@@ -62,6 +62,7 @@ import {
   syncMantenimientoCreate,
   syncMantenimientoReplaceRefacciones,
   syncMantenimientoUpdate,
+  reconcileServiceWorkshopSnapshotsAfterSync,
   syncServicioClose,
   syncServicioCreate,
   syncServicioReplaceRefacciones,
@@ -178,7 +179,7 @@ async function syncServiceStatus(
     .from('servicios')
     .update({ status: payload.status })
     .eq('id', payload.serviceId)
-    .select('id, status, costo_refacciones, total, updated_at')
+    .select('id, maquina_id, status, costo_refacciones, total, updated_at')
     .single()
 
   if (updateError) throw updateError
@@ -188,6 +189,9 @@ async function syncServiceStatus(
     costo_refacciones: Number(updated.costo_refacciones ?? 0),
     total: Number(updated.total ?? 0),
     updated_at: updated.updated_at,
+  })
+  await reconcileServiceWorkshopSnapshotsAfterSync(ownerId, payload.serviceId, {
+    maquina_id: updated.maquina_id,
   })
 }
 
@@ -253,7 +257,7 @@ async function syncServiceCompletion(
       status: payload.statusFinal,
     })
     .eq('id', payload.serviceId)
-    .select('id, status, costo_refacciones, total, updated_at')
+    .select('id, maquina_id, status, costo_refacciones, total, updated_at')
     .single()
 
   if (updateError) throw updateError
@@ -263,6 +267,9 @@ async function syncServiceCompletion(
     costo_refacciones: Number(updated.costo_refacciones ?? 0),
     total: Number(updated.total ?? 0),
     updated_at: updated.updated_at,
+  })
+  await reconcileServiceWorkshopSnapshotsAfterSync(ownerId, payload.serviceId, {
+    maquina_id: updated.maquina_id,
   })
   await markServiceCommandSynced(ownerId, payload.serviceId, commandId)
 }

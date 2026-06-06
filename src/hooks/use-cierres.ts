@@ -18,6 +18,8 @@ import { buildServicioCompletionRequirementMessage, summarizeServicioEvidencias 
 import { formatLocalIsoDate } from '@/lib/utils'
 import type { Cierre, Evidencia, Servicio } from '@/types/domain.types'
 import type { CierreInput } from '@/schemas/cliente.schema'
+import { maquinasKeys } from './use-maquinas'
+import { maquinasTallerKeys } from './use-maquinas-taller'
 import { refreshServicioInQueryCache, serviciosKeys } from './use-servicios'
 
 export const cierresKeys = {
@@ -304,6 +306,8 @@ export function useCerrarServicioMutation(
         qc.invalidateQueries({ queryKey: serviciosKeys.all, refetchType: 'active' }),
         qc.invalidateQueries({ queryKey: cierresKeys.byServicio(servicioId), refetchType: 'active' }),
         qc.invalidateQueries({ queryKey: cierresKeys.catalog(), refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: maquinasKeys.all, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: maquinasTallerKeys.all, refetchType: 'active' }),
       ])
     },
   })

@@ -10,6 +10,8 @@ import {
   getCachedInventarioSnapshot,
   getCachedInventarioTecnicoSnapshot,
   getCachedMaquinasSnapshot,
+  getCachedMaquinasTallerMovimientosSnapshot,
+  getCachedMaquinasTallerSnapshot,
   getCachedMantenimientoRefaccionesSnapshot,
   getCachedMantenimientosSnapshot,
   getCachedProfilesByRole,
@@ -21,6 +23,8 @@ import {
   isLocalNumberId,
   parseLocalAttachmentId,
   replaceCachedEvidenciasForServicio,
+  replaceCachedMaquinasTallerMovimientosSnapshot,
+  replaceCachedMaquinasTallerSnapshot,
   replaceCachedServiciosListSnapshot,
   toLocalAttachmentKey,
   upsertCachedClientes,
@@ -44,6 +48,8 @@ import {
   buildInventarioItem,
   buildInventarioTecnico,
   buildMaquina,
+  buildMaquinaTaller,
+  buildMaquinaTallerMovimiento,
   buildMantenimiento,
   buildProfile,
   buildServicio,
@@ -197,6 +203,45 @@ describe('offline cache', () => {
     expect(completados.map((servicio) => servicio.id).sort()).toEqual([31, 33])
     expect(await getCachedServicioDetalleSnapshot(OWNER_ID, 30)).toBeNull()
     expect(await getCachedServicioDetalleSnapshot(OWNER_ID, 32)).toMatchObject({ id: 32, status: 'en_ruta' })
+  })
+
+  it('reconciles workshop snapshots without keeping stale open records', async () => {
+    const localTallerId = createLocalNumberId()
+    const localMovimientoId = createLocalNumberId()
+
+    await replaceCachedMaquinasTallerSnapshot(OWNER_ID, [
+      buildMaquinaTaller({ id: 120, maquina_id: 20, fecha_salida: null }),
+      buildMaquinaTaller({ id: 121, maquina_id: 21, fecha_salida: null }),
+      buildMaquinaTaller({ id: 122, maquina_id: 22, fecha_salida: '2026-04-21' }),
+      buildMaquinaTaller({ id: localTallerId, maquina_id: 23, fecha_salida: null }),
+    ])
+    await replaceCachedMaquinasTallerMovimientosSnapshot(OWNER_ID, [
+      buildMaquinaTallerMovimiento({ id: 130, maquina_id: 20 }),
+      buildMaquinaTallerMovimiento({ id: 131, maquina_id: 20 }),
+      buildMaquinaTallerMovimiento({ id: 132, maquina_id: 21 }),
+      buildMaquinaTallerMovimiento({ id: localMovimientoId, maquina_id: 20 }),
+    ])
+
+    await replaceCachedMaquinasTallerSnapshot(OWNER_ID, [
+      buildMaquinaTaller({ id: 120, maquina_id: 20, fecha_salida: null }),
+    ], { soloAbiertas: true })
+    await replaceCachedMaquinasTallerMovimientosSnapshot(OWNER_ID, [
+      buildMaquinaTallerMovimiento({ id: 130, maquina_id: 20 }),
+    ], { maquinaId: 20 })
+
+    const tallerIds = (await getCachedMaquinasTallerSnapshot(OWNER_ID)).map((row) => row.id)
+    const movimientoIds = (await getCachedMaquinasTallerMovimientosSnapshot(OWNER_ID)).map((row) => row.id)
+
+    expect(tallerIds.sort((left, right) => left - right)).toEqual([
+      120,
+      122,
+      localTallerId,
+    ].sort((left, right) => left - right))
+    expect(movimientoIds.sort((left, right) => left - right)).toEqual([
+      130,
+      132,
+      localMovimientoId,
+    ].sort((left, right) => left - right))
   })
 
   it('tracks pending local evidence attachments and local URL keys', async () => {

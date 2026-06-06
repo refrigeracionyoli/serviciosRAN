@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   ArrowUpDown,
@@ -65,6 +65,7 @@ import type { ClaseOrden, Servicio, ServicioDateFilterField, ServicioStatus, Tip
 const PAGE_SIZE = 10
 const CHUNK_PAGE_COUNT = 5
 const CHUNK_SIZE = PAGE_SIZE * CHUNK_PAGE_COUNT
+const SEARCH_DEBOUNCE_MS = 400
 
 type SortDirection = 'asc' | 'desc'
 type ServicioSortKey = Exclude<ServiciosListSortKey, 'created_at'>
@@ -189,6 +190,20 @@ function getWeekBounds(isoDate: string): { inicio: string; fin: string } {
   }
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value)
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedValue(value)
+    }, delayMs)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [delayMs, value])
+
+  return debouncedValue
+}
+
 function formatDateRangeLabel(desde: string | null, hasta: string | null): string {
   if (!desde || !hasta) return 'Sin semana'
   return `${formatDate(desde)} - ${formatDate(hasta)}`
@@ -290,10 +305,12 @@ export function ServiciosPage() {
   const [isExportingWeekly, setIsExportingWeekly] = useState(false)
   const [weeklyExportProgress, setWeeklyExportProgress] = useState<WeeklyReportProgress | null>(null)
   const weeklyExportAbortRef = useRef<AbortController | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const shouldRefocusSearchRef = useRef(false)
   const filtros = useFiltrosStore()
   const todayIso = formatLocalIsoDate(new Date())
   const [weeklyReportWeekStart, setWeeklyReportWeekStart] = useState(() => getWeekBounds(todayIso).inicio)
-  const deferredSearch = useDeferredValue((filtros.search ?? '').trim().toLowerCase())
+  const debouncedSearch = useDebouncedValue((filtros.search ?? '').trim().toLowerCase(), SEARCH_DEBOUNCE_MS)
   const [statusFilters, setStatusFilters] = useState<ServicioStatus[]>(() => (filtros.status ? [filtros.status] : []))
   const [tipoFilters, setTipoFilters] = useState<TipoServicio[]>(() => (filtros.tipoServicio ? [filtros.tipoServicio] : []))
   const [claseFilters, setClaseFilters] = useState<ClaseOrden[]>([])
@@ -313,7 +330,7 @@ export function ServiciosPage() {
     fechaCampo: dateFilterField,
     tipoServicios: tipoFilters,
     clasesOrden: claseFilters,
-    search: deferredSearch || null,
+    search: debouncedSearch || null,
   }), [
     claseFilters,
     dateFilterField,
@@ -321,7 +338,7 @@ export function ServiciosPage() {
     filtros.fechaDesde,
     filtros.fechaHasta,
     filtros.tecnicoId,
-    deferredSearch,
+    debouncedSearch,
     statusFilters,
     tipoFilters,
   ])
@@ -331,17 +348,19 @@ export function ServiciosPage() {
   const chunkFirstPage = chunkIndex * CHUNK_PAGE_COUNT + 1
   const chunkStart = chunkIndex * CHUNK_SIZE
   const chunkEnd = chunkStart + CHUNK_SIZE - 1
-  const { data: serviciosChunk, isLoading } = useServiciosChunkQuery({
+  const { data: serviciosChunk, isFetching, isLoading } = useServiciosChunkQuery({
     filters: serviciosQueryFilters,
     from: chunkStart,
     to: chunkEnd,
     sort: sortForQuery,
   })
+  const [hasLoadedServiciosOnce, setHasLoadedServiciosOnce] = useState(false)
   const emptyServicios = useMemo<Servicio[]>(() => [], [])
   const servicios = serviciosChunk?.rows ?? emptyServicios
   const totalServicios = serviciosChunk?.totalCount ?? 0
   const { mutateAsync: eliminarServicioAsync, isPending: eliminandoServicio } = useEliminarServicioMutation()
-  const isPageLoading = isLoading
+  const isPageLoading = isLoading && !hasLoadedServiciosOnce
+  const isTableSearching = isFetching && hasLoadedServiciosOnce
 
   const tipoServicioOptions = useMemo<Array<{ value: TipoServicio; label: string }>>(() => {
     const values = new Set<TipoServicio>([
@@ -379,12 +398,25 @@ export function ServiciosPage() {
     filtros.clienteId,
     filtros.fechaDesde,
     filtros.fechaHasta,
-    filtros.search,
+    debouncedSearch,
     filtros.tecnicoId,
     sortState,
     statusFilters,
     tipoFilters,
   ])
+
+  useEffect(() => {
+    if (serviciosChunk && !isFetching) {
+      setHasLoadedServiciosOnce(true)
+    }
+  }, [isFetching, serviciosChunk])
+
+  useEffect(() => {
+    if (!isLoading && shouldRefocusSearchRef.current) {
+      shouldRefocusSearchRef.current = false
+      searchInputRef.current?.focus({ preventScroll: true })
+    }
+  }, [debouncedSearch, isLoading])
 
   useEffect(() => {
     return () => {
@@ -699,7 +731,7 @@ export function ServiciosPage() {
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-ran-navy">Servicios</h1>
-          {isPageLoading ? (
+          {isPageLoading || isTableSearching ? (
             <Skeleton className="mt-2 h-6 w-56 rounded-full" />
           ) : (
             <p className="mt-1 text-lg text-ran-slate">{totalServicios} servicios registrados</p>
@@ -825,8 +857,12 @@ export function ServiciosPage() {
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ran-slate" />
                 <Input
+                  ref={searchInputRef}
                   value={filtros.search ?? ''}
-                  onChange={(event) => filtros.setFiltro('search', event.target.value || null)}
+                  onChange={(event) => {
+                    shouldRefocusSearchRef.current = true
+                    filtros.setFiltro('search', event.target.value || null)
+                  }}
                   placeholder="Buscar por orden, cliente, técnico, tipo o máquina..."
                   className="h-11 rounded-xl border-slate-200 pl-10"
                 />
@@ -921,6 +957,12 @@ export function ServiciosPage() {
             </div>
           </div>
 
+          {isTableSearching ? (
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <AdminTableSkeleton rows={7} columns={6} />
+            </div>
+          ) : (
+            <>
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -1091,6 +1133,8 @@ export function ServiciosPage() {
               </Button>
             </div>
           </div>
+            </>
+          )}
         </>
       )}
 

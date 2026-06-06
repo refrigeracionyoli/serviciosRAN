@@ -1083,7 +1083,11 @@ export function useCompletarServicioConRefaccionesMutation() {
     },
     onSuccess: async (_result, variables) => {
       await refreshServicioInQueryCache(qc, variables.serviceId)
-      await invalidateActiveServicioQueries(qc, variables.serviceId)
+      await Promise.all([
+        invalidateActiveServicioQueries(qc, variables.serviceId),
+        qc.invalidateQueries({ queryKey: maquinasKeys.all, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: maquinasTallerKeys.all, refetchType: 'active' }),
+      ])
     },
   })
 }

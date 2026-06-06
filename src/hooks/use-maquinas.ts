@@ -47,7 +47,7 @@ export function useMaquinasQuery(clienteIdOrOptions?: number | MaquinasQueryOpti
 
       const shouldUseLocalOnly = await hasBlockingRemoteFetchCommands(
         ownerId,
-        ['maquina.create', 'maquina.update', 'servicio.update', 'servicio.close', 'taller.registrar_entrada'],
+        ['maquina.create', 'maquina.update', 'servicio.update', 'servicio.close', 'taller.registrar_entrada', 'taller.registrar_salida', 'taller.reubicacion'],
       )
       if (shouldUseLocalOnly) {
         return getCachedMaquinasSnapshot(ownerId, { clienteId, includeInactive })

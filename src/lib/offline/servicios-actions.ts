@@ -16,6 +16,8 @@ import {
   getCachedServicioDetalleSnapshot,
   getCachedServicioRefaccionesSnapshot,
   isLocalNumberId,
+  replaceCachedMaquinasTallerMovimientosSnapshot,
+  replaceCachedMaquinasTallerSnapshot,
   resolveLinkedNumberId,
   resolveLinkedStringId,
   upsertCachedCierres,
@@ -884,10 +886,10 @@ async function applyLocalServiceWorkshopSync(
   }
 }
 
-async function reconcileServiceWorkshopSnapshotsAfterSync(
+export async function reconcileServiceWorkshopSnapshotsAfterSync(
   ownerId: string,
   localServiceId: number,
-  remoteService: Servicio,
+  remoteService: Pick<Servicio, 'maquina_id'>,
 ) {
   try {
     const tempRows = await offlineDb.maquinasTaller.where('ownerId').equals(ownerId).toArray()
@@ -932,10 +934,14 @@ async function reconcileServiceWorkshopSnapshotsAfterSync(
       await upsertCachedMaquinas(ownerId, [maquinaResult.data as Maquina])
     }
     if (!tallerResult.error) {
-      await upsertCachedMaquinasTaller(ownerId, (tallerResult.data ?? []) as MaquinaEnTaller[])
+      await replaceCachedMaquinasTallerSnapshot(ownerId, (tallerResult.data ?? []) as MaquinaEnTaller[], {
+        maquinaId: remoteService.maquina_id,
+      })
     }
     if (!movimientosResult.error) {
-      await upsertCachedMaquinasTallerMovimientos(ownerId, (movimientosResult.data ?? []) as MaquinaTallerMovimiento[])
+      await replaceCachedMaquinasTallerMovimientosSnapshot(ownerId, (movimientosResult.data ?? []) as MaquinaTallerMovimiento[], {
+        maquinaId: remoteService.maquina_id,
+      })
     }
   } catch {
     // La sincronización principal ya ocurrió; no bloqueamos por una reconciliación de caché.
