@@ -505,6 +505,7 @@ export function PolizaForm({
                 <Label htmlFor="nueva_fecha_instalacion">Fecha de instalación</Label>
                 <input type="hidden" {...maquinaModalForm.register('fecha_instalacion')} />
                 <DatePickerInput
+                  inputId="nueva_fecha_instalacion"
                   value={maquinaModalForm.watch('fecha_instalacion')}
                   onChange={(value) =>
                     maquinaModalForm.setValue('fecha_instalacion', value, {
@@ -512,8 +513,9 @@ export function PolizaForm({
                       shouldDirty: true,
                     })
                   }
-                  placeholder="Seleccionar fecha de instalación"
+                  placeholder="Capturar fecha de instalación"
                   allowClear
+                  allowManualInput
                 />
               </div>
 

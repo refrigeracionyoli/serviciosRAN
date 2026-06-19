@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Clock3, Factory, History, Plus, Search, Trash2, Wrench } from 'lucide-react'
+import { Clock3, Download, Factory, History, Pencil, Plus, Search, Trash2, Wrench } from 'lucide-react'
 import {
   AdminCardListSkeleton,
   AdminStatsGridSkeleton,
@@ -32,6 +32,7 @@ import { useClientesQuery } from '@/hooks/use-clientes'
 import { useCrearMaquinaMutation, useMaquinasQuery } from '@/hooks/use-maquinas'
 import {
   type ServicioTallerOption,
+  useActualizarDiagnosticoTallerMutation,
   useMaquinaTallerMovimientosQuery,
   useMaquinasEnTallerQuery,
   useEliminarMaquinaTallerMutation,
@@ -96,6 +97,14 @@ function getRegistroCategoriaLabel(categoria: RegistroCategoria): string {
   return 'Cerrada'
 }
 
+function getFiltroListaLabel(filtro: FiltroLista): string {
+  if (filtro === 'en_taller') return 'En taller'
+  if (filtro === 'instalacion') return 'Instaladas'
+  if (filtro === 'urban') return 'Urban'
+  if (filtro === 'cerradas_otras') return 'Otras cerradas'
+  return 'Todas'
+}
+
 function getRegistroCategoriaClass(categoria: RegistroCategoria): string {
   if (categoria === 'en_taller') return 'border-blue-200 bg-blue-100 text-blue-800'
   if (categoria === 'instalacion') return 'border-green-200 bg-green-100 text-green-800'
@@ -154,6 +163,9 @@ export function MaquinasTallerPage() {
   const [openUrbanDialog, setOpenUrbanDialog] = useState(false)
   const [urbanFecha, setUrbanFecha] = useState(todayIso)
   const [urbanDetalle, setUrbanDetalle] = useState('')
+  const [openDiagnosticoDialog, setOpenDiagnosticoDialog] = useState(false)
+  const [diagnosticoDraft, setDiagnosticoDraft] = useState('')
+  const [isExportingReporteTaller, setIsExportingReporteTaller] = useState(false)
   const [registroAEliminar, setRegistroAEliminar] = useState<MaquinaEnTaller | null>(null)
 
   const { data: registros = [], isLoading } = useMaquinasEnTallerQuery()
@@ -168,6 +180,7 @@ export function MaquinasTallerPage() {
   const { mutateAsync: crearMaquinaAsync, isPending: creandoMaquina } = useCrearMaquinaMutation()
   const { mutateAsync: registrarSalidaAsync, isPending: registrandoSalida } = useRegistrarSalidaTallerMutation()
   const { mutateAsync: eliminarRegistroTallerAsync, isPending: eliminandoRegistroTaller } = useEliminarMaquinaTallerMutation()
+  const { mutateAsync: actualizarDiagnosticoAsync, isPending: actualizandoDiagnostico } = useActualizarDiagnosticoTallerMutation()
 
   const salidasRegistros = useMemo<SalidaTallerResumen[]>(() => {
     return movimientosTaller
@@ -334,6 +347,48 @@ export function MaquinasTallerPage() {
   const handleAbrirUrbanDialog = () => {
     resetUrbanForm()
     setOpenUrbanDialog(true)
+  }
+
+  const handleAbrirDiagnosticoDialog = () => {
+    if (!registroSeleccionado) return
+    setDiagnosticoDraft(registroSeleccionado.diagnostico ?? '')
+    setOpenDiagnosticoDialog(true)
+  }
+
+  const handleExportarReporteTaller = async () => {
+    if (registrosFiltrados.length === 0) {
+      toast({
+        title: 'Sin registros para exportar',
+        description: 'Ajusta el filtro o la búsqueda para generar el reporte de taller.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    setIsExportingReporteTaller(true)
+    try {
+      const { exportMaquinasTallerReport } = await import('@/lib/maquinas-taller-export')
+      const searchLabel = buscarLista.trim() ? ` · Búsqueda: ${buscarLista.trim()}` : ''
+      await exportMaquinasTallerReport({
+        registros: registrosFiltrados,
+        movimientos: movimientosTaller,
+        scopeLabel: `${getFiltroListaLabel(filtroLista)}${searchLabel}`,
+      })
+
+      toast({
+        title: 'Reporte generado',
+        description: 'El archivo de máquinas en taller se descargó correctamente.',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo generar el reporte de taller.'
+      toast({
+        title: 'Error al generar reporte',
+        description: message,
+        variant: 'destructive',
+      })
+    } finally {
+      setIsExportingReporteTaller(false)
+    }
   }
 
   const handleConfirmarQuitarDeTaller = async () => {
@@ -513,6 +568,57 @@ export function MaquinasTallerPage() {
     }
   }
 
+  const handleActualizarDiagnostico = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!registroSeleccionado) {
+      toast({
+        title: 'Sin máquina seleccionada',
+        description: 'Selecciona un registro abierto de taller antes de actualizar el diagnóstico.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    if (categoriaRegistroSeleccionado !== 'en_taller') {
+      toast({
+        title: 'Registro no disponible',
+        description: 'Solo puedes actualizar el diagnóstico de máquinas abiertas en taller.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    const currentValue = registroSeleccionado.diagnostico?.trim() ?? ''
+    const nextValue = diagnosticoDraft.trim()
+
+    if (currentValue === nextValue) {
+      setOpenDiagnosticoDialog(false)
+      return
+    }
+
+    try {
+      await actualizarDiagnosticoAsync({
+        registro_id: registroSeleccionado.id,
+        diagnostico: nextValue || null,
+        fecha_movimiento: todayIso,
+      })
+
+      setOpenDiagnosticoDialog(false)
+      toast({
+        title: 'Diagnóstico actualizado',
+        description: 'El cambio quedó guardado en el registro y en el historial de taller.',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo actualizar el diagnóstico.'
+      toast({
+        title: 'Error al actualizar diagnóstico',
+        description: message,
+        variant: 'destructive',
+      })
+    }
+  }
+
   return (
     <>
       <div>
@@ -527,6 +633,15 @@ export function MaquinasTallerPage() {
                 onClick={() => navigate('/catalogos/maquinas')}
               >
                 Catálogo de máquinas
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10 rounded-xl"
+                onClick={() => void handleExportarReporteTaller()}
+                disabled={isPageLoading || isExportingReporteTaller}
+              >
+                <Download className="mr-1.5 h-4 w-4" />
+                {isExportingReporteTaller ? 'Generando...' : 'Reporte'}
               </Button>
               <Button className="h-10 rounded-xl bg-ran-navy px-4 hover:bg-ran-navy/90" onClick={handleAbrirRegistroDialog}>
                 <Plus className="mr-1.5 h-4 w-4" />
@@ -753,6 +868,15 @@ export function MaquinasTallerPage() {
                         </Button>
                         {categoriaRegistroSeleccionado === 'en_taller' && (
                           <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 rounded-lg border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100 hover:text-blue-900"
+                              onClick={handleAbrirDiagnosticoDialog}
+                            >
+                              <Pencil className="mr-1 h-3.5 w-3.5" />
+                              Editar diagnóstico
+                            </Button>
                             <Button
                               variant="outline"
                               size="sm"
@@ -1079,6 +1203,66 @@ export function MaquinasTallerPage() {
                 disabled={isSubmittingRegistro || (!isRegistroManual && maquinasDisponibles.length === 0)}
               >
                 {isSubmittingRegistro ? 'Registrando...' : 'Registrar máquina'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={openDiagnosticoDialog}
+        onOpenChange={(nextOpen) => {
+          setOpenDiagnosticoDialog(nextOpen)
+          if (!nextOpen) {
+            setDiagnosticoDraft('')
+          }
+        }}
+      >
+        <DialogContent className="max-w-xl rounded-2xl border border-slate-200 p-0">
+          <DialogHeader className="border-b border-slate-200 px-6 py-4">
+            <DialogTitle className="text-ran-navy">Editar diagnóstico</DialogTitle>
+            <DialogDescription>
+              Guarda cambios del diagnóstico para la máquina abierta en taller.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleActualizarDiagnostico} className="space-y-4 px-6 py-5">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+              <p className="text-sm font-semibold text-blue-950">
+                {registroSeleccionado?.maquina?.modelo ?? 'Equipo'} · {registroSeleccionado?.maquina?.serie ?? 'Sin serie'}
+              </p>
+              <p className="mt-1 text-xs text-blue-800">
+                {registroSeleccionado?.cliente?.nombre ?? registroSeleccionado?.maquina?.cliente?.nombre ?? 'Sin cliente asignado'}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="diagnostico-taller">Diagnóstico</Label>
+              <textarea
+                id="diagnostico-taller"
+                value={diagnosticoDraft}
+                onChange={(event) => setDiagnosticoDraft(event.target.value)}
+                rows={5}
+                placeholder="Captura el diagnóstico actualizado de la máquina"
+                className="flex w-full resize-none rounded-xl border border-input bg-background px-3 py-2.5 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 rounded-xl"
+                onClick={() => setOpenDiagnosticoDialog(false)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                className="h-10 rounded-xl bg-ran-navy px-5 hover:bg-ran-navy/90"
+                disabled={actualizandoDiagnostico}
+              >
+                {actualizandoDiagnostico ? 'Guardando...' : 'Guardar diagnóstico'}
               </Button>
             </div>
           </form>

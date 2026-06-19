@@ -63,4 +63,23 @@ describe('workshop machine contracts', () => {
     expect(tallerActions).toContain("accion: 'reubicacion'")
     expect(tallerActions).toContain("origen: payload.previousClienteId ? `cliente:${String(payload.previousClienteId)}` : 'sin_cliente'")
   })
+
+  it('supports workshop reports and auditable diagnostic updates', () => {
+    const hook = read('src/hooks/use-maquinas-taller.ts')
+    const page = read('src/pages/admin/maquinas-taller/MaquinasTallerPage.tsx')
+    const exportModule = read('src/lib/maquinas-taller-export.ts')
+
+    expect(page).toContain('handleExportarReporteTaller')
+    expect(page).toContain("import('@/lib/maquinas-taller-export')")
+    expect(page).toContain('Reporte')
+    expect(exportModule).toContain('exportMaquinasTallerReport')
+    expect(exportModule).toContain('workbook.addWorksheet')
+    expect(exportModule).toContain('maquinas-taller-')
+    expect(hook).toContain('useActualizarDiagnosticoTallerMutation')
+    expect(hook).toContain("accion: 'nota'")
+    expect(hook).toContain("motivo: 'diagnostico'")
+    expect(hook).toContain('buildDiagnosticChangeDetail')
+    expect(page).toContain('Editar diagnóstico')
+    expect(page).toContain('Guardar diagnóstico')
+  })
 })

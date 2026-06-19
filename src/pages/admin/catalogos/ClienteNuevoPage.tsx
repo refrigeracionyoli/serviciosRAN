@@ -377,12 +377,14 @@ export function ClienteNuevoPage() {
               </datalist>
             </div>
             <div>
-              <Label className="mb-1.5 block">Fecha instalación</Label>
+              <Label htmlFor="fecha-instalacion-maquina" className="mb-1.5 block">Fecha instalación</Label>
               <DatePickerInput
+                inputId="fecha-instalacion-maquina"
                 value={maquina.fecha_instalacion}
                 onChange={(value) => setMaquina((prev) => ({ ...prev, fecha_instalacion: value ?? '' }))}
-                placeholder="Seleccionar fecha de instalación"
+                placeholder="Capturar fecha de instalación"
                 allowClear
+                allowManualInput
               />
             </div>
           </div>

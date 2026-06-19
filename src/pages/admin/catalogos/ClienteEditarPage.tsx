@@ -273,6 +273,7 @@ export function ClienteEditarPage() {
             cliente_id: clienteIdValido,
             status: 'operando',
             activo: true,
+            fecha_instalacion: toNullable(maquinaForm.fecha_instalacion) ?? existing.fecha_instalacion,
             observaciones: toNullable(maquinaForm.observaciones) ?? existing.observaciones,
           },
         })
@@ -578,12 +579,14 @@ export function ClienteEditarPage() {
                 </div>
               </div>
               <div className="mt-3">
-                <Label className="mb-1.5 block">Fecha instalación</Label>
+                <Label htmlFor="maquina-fecha-instalacion" className="mb-1.5 block">Fecha instalación</Label>
                 <DatePickerInput
+                  inputId="maquina-fecha-instalacion"
                   value={maquinaForm.fecha_instalacion}
                   onChange={(value) => setMaquinaForm((prev) => ({ ...prev, fecha_instalacion: value ?? '' }))}
-                  placeholder="Seleccionar fecha"
+                  placeholder="Capturar fecha"
                   allowClear
+                  allowManualInput
                 />
               </div>
               <div className="mt-3">

@@ -17,6 +17,8 @@ import {
   isLocalNumberId,
   replaceCachedMaquinasTallerMovimientosSnapshot,
   replaceCachedMaquinasTallerSnapshot,
+  upsertCachedMaquinasTaller,
+  upsertCachedMaquinasTallerMovimientos,
   upsertCachedServicios,
 } from '@/lib/offline/cache'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
@@ -83,6 +85,12 @@ export interface EliminarMaquinaTallerInput {
   registro_id: number
 }
 
+export interface ActualizarDiagnosticoTallerInput {
+  registro_id: number
+  diagnostico: string | null
+  fecha_movimiento?: string
+}
+
 const SELECT_MAQUINAS_TALLER = `
   *,
   maquina:maquinas(*, cliente:clientes(id, nombre, codigo_cliente)),
@@ -108,6 +116,20 @@ function toNullableText(value: string | null | undefined): string | null {
   if (!value) return null
   const normalized = value.trim()
   return normalized.length ? normalized : null
+}
+
+function getTodayIsoDate(): string {
+  const now = new Date()
+  const year = now.getFullYear()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function buildDiagnosticChangeDetail(previousValue: string | null, nextValue: string | null): string {
+  const previous = previousValue?.trim() || 'Sin diagnostico'
+  const next = nextValue?.trim() || 'Sin diagnostico'
+  return `Diagnostico actualizado. Anterior: ${previous} | Nuevo: ${next}`
 }
 
 function buildServicioTallerOptions(servicios: Servicio[], tipo: 'RETIRO' | 'INSTALACION'): ServicioTallerOption[] {
@@ -652,6 +674,92 @@ export function useEliminarMaquinaTallerMutation() {
       await qc.invalidateQueries({ queryKey: ['maquinas-taller', 'movimientos'] })
       await qc.invalidateQueries({ queryKey: maquinasKeys.all })
       await qc.invalidateQueries({ queryKey: serviciosKeys.all })
+    },
+  })
+}
+
+export function useActualizarDiagnosticoTallerMutation() {
+  const qc = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (input: ActualizarDiagnosticoTallerInput) => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) {
+        throw new Error('No hay sesión activa para actualizar el diagnóstico.')
+      }
+
+      if (!isBrowserOnline() || isLocalNumberId(input.registro_id)) {
+        throw new Error('No se puede actualizar el diagnóstico de taller sin conexión. Inténtalo nuevamente con internet.')
+      }
+
+      const diagnostico = toNullableText(input.diagnostico)
+
+      const { data: registro, error: registroError } = await supabase
+        .from('maquinas_en_taller')
+        .select('id, maquina_id, servicio_id, orden, fecha_salida, status, diagnostico')
+        .eq('id', input.registro_id)
+        .maybeSingle()
+
+      if (registroError) throw registroError
+      if (!registro) {
+        throw new Error('No se encontró el registro de taller.')
+      }
+
+      if (registro.fecha_salida) {
+        throw new Error('Solo se puede actualizar el diagnóstico de máquinas abiertas en taller.')
+      }
+
+      const { data: updated, error: updateError } = await supabase
+        .from('maquinas_en_taller')
+        .update({ diagnostico })
+        .eq('id', registro.id)
+        .select(SELECT_MAQUINAS_TALLER)
+        .single()
+
+      if (updateError) throw updateError
+
+      const { data: userData } = await supabase.auth.getUser()
+      const usuarioId = userData.user?.id ?? null
+
+      const { data: movimiento, error: movementError } = await supabase
+        .from('maquinas_taller_movimientos')
+        .insert({
+          maquina_id: registro.maquina_id,
+          maquina_taller_id: registro.id,
+          servicio_id: registro.servicio_id,
+          orden_servicio: registro.orden,
+          accion: 'nota',
+          motivo: 'diagnostico',
+          origen: 'taller',
+          destino: 'taller',
+          detalle: buildDiagnosticChangeDetail(registro.diagnostico, diagnostico),
+          fecha_movimiento: input.fecha_movimiento ?? getTodayIsoDate(),
+          usuario_id: usuarioId,
+        })
+        .select(SELECT_MOVIMIENTOS_TALLER)
+        .single()
+
+      if (movementError) {
+        await supabase
+          .from('maquinas_en_taller')
+          .update({ diagnostico: registro.diagnostico })
+          .eq('id', registro.id)
+
+        throw movementError
+      }
+
+      await Promise.all([
+        upsertCachedMaquinasTaller(ownerId, [updated as MaquinaEnTaller]),
+        movimiento
+          ? upsertCachedMaquinasTallerMovimientos(ownerId, [movimiento as MaquinaTallerMovimiento])
+          : Promise.resolve(),
+      ])
+
+      return updated as MaquinaEnTaller
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: maquinasTallerKeys.all })
+      await qc.invalidateQueries({ queryKey: ['maquinas-taller', 'movimientos'] })
     },
   })
 }
