@@ -1,6 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  isInstallationServiceType,
+  isRetiroServiceType,
+  normalizeServiceType,
+} from '@/lib/service-types'
 
 const root = process.cwd()
 
@@ -9,6 +14,12 @@ function read(relativePath: string): string {
 }
 
 describe('workshop machine contracts', () => {
+  it('matches workshop service types with accents and free-text casing', () => {
+    expect(normalizeServiceType('Instalación - máquina hielo')).toContain('INSTALACION')
+    expect(isInstallationServiceType('INSTALACIÓN - MAQUINA HIELO')).toBe(true)
+    expect(isRetiroServiceType('retiro - maquina hielo')).toBe(true)
+  })
+
   it('allows admins to remove open workshop records without deleting machines or services', () => {
     const hook = read('src/hooks/use-maquinas-taller.ts')
     const page = read('src/pages/admin/maquinas-taller/MaquinasTallerPage.tsx')
@@ -48,6 +59,22 @@ describe('workshop machine contracts', () => {
     expect(cierres).toContain('maquinasTallerKeys.all')
     expect(syncEngine).toContain('reconcileServiceWorkshopSnapshotsAfterSync')
     expect(syncEngine).toContain("select('id, maquina_id, status, costo_refacciones, total, updated_at')")
+  })
+
+  it('deletes pure temporary installation machines when a saved service changes type', () => {
+    const serviciosActions = read('src/lib/offline/servicios-actions.ts')
+
+    expect(serviciosActions).toContain('maybeDeletePendingInstallationMachineLocal')
+    expect(serviciosActions).toContain('maybeDeletePendingInstallationMachineRemote')
+    expect(serviciosActions).toContain('deletePendingInstallationMachineCache')
+    expect(serviciosActions).toContain("command.type !== 'maquina.create'")
+    expect(serviciosActions).toContain("supabase.from('polizas').select('id').eq('maquina_id', maquinaId)")
+    expect(serviciosActions).toContain("supabase.from('mantenimientos_poliza').select('id').eq('maquina_id', maquinaId)")
+    expect(serviciosActions).toContain("supabase.from('maquinas_en_taller').select('id').eq('maquina_id', maquinaId)")
+    expect(serviciosActions).toContain("supabase.from('maquinas_taller_movimientos').select('id').eq('maquina_id', maquinaId)")
+    expect(serviciosActions).toContain(".from('maquinas')\n    .delete()")
+    expect(serviciosActions).not.toContain('maybeArchivePendingInstallationMachine')
+    expect(serviciosActions).not.toContain('update({ activo: false })')
   })
 
   it('uses the same robust reubicacion sync path online and offline', () => {

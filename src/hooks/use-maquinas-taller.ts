@@ -24,6 +24,7 @@ import {
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
 import { withOfflineFallback } from '@/lib/offline/query-fallback'
 import { getCurrentSessionUserId } from '@/lib/offline/session'
+import { isRetiroServiceType, normalizeServiceType } from '@/lib/service-types'
 import type {
   Cliente,
   Maquina,
@@ -133,10 +134,10 @@ function buildDiagnosticChangeDetail(previousValue: string | null, nextValue: st
 }
 
 function buildServicioTallerOptions(servicios: Servicio[], tipo: 'RETIRO' | 'INSTALACION'): ServicioTallerOption[] {
-  const needle = tipo.toUpperCase()
+  const needle = normalizeServiceType(tipo)
 
   return servicios
-    .filter((servicio) => servicio.tipo_servicio.toUpperCase().includes(needle))
+    .filter((servicio) => normalizeServiceType(servicio.tipo_servicio).includes(needle))
     .sort((left, right) => right.created_at.localeCompare(left.created_at))
     .slice(0, 200)
     .map((servicio) => ({
@@ -271,12 +272,19 @@ export function useServiciosTallerQuery(tipo: 'RETIRO' | 'INSTALACION') {
 
       return withOfflineFallback({
         remote: async () => {
-          const { data, error } = await supabase
+          let query = supabase
             .from('servicios')
             .select(SELECT_SERVICIOS_TALLER)
-            .ilike('tipo_servicio', `%${tipo}%`)
             .order('created_at', { ascending: false })
             .limit(200)
+
+          if (tipo === 'INSTALACION') {
+            query = query.or('tipo_servicio.ilike.%INSTALACION%,tipo_servicio.ilike.%INSTALACIÓN%')
+          } else {
+            query = query.ilike('tipo_servicio', `%${tipo}%`)
+          }
+
+          const { data, error } = await query
 
           if (error) throw error
           await upsertCachedServicios(ownerId, data as Servicio[])
@@ -332,7 +340,7 @@ export function useRegistrarEntradaTallerMutation() {
           const clienteId = input.cliente_id ?? servicio?.cliente_id ?? null
           const orden = input.orden ?? servicio?.orden ?? null
           const diagnostico = toNullableText(input.diagnostico)
-          const motivo = input.motivo ?? (servicio?.tipo_servicio?.toUpperCase().includes('RETIRO') ? 'retiro' : 'manual')
+          const motivo = input.motivo ?? (isRetiroServiceType(servicio?.tipo_servicio) ? 'retiro' : 'manual')
           const origen = motivo === 'retiro' ? 'cliente' : motivo === 'instalacion' ? 'instalacion' : 'manual'
 
           const { data: registroAbierto, error: registroAbiertoError } = await supabase

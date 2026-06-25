@@ -26,5 +26,7 @@ describe('service delete contracts', () => {
     expect(r2Client).toContain('deleteServicioCompleto')
     expect(serviciosHook).toContain('No se puede eliminar un servicio sin conexión')
     expect(serviciosHook).toContain('removeCachedServicio')
+    expect(serviciosHook).toContain('queryKey: maquinasKeys.all')
+    expect(serviciosHook).toContain('queryKey: maquinasTallerKeys.all')
   })
 })

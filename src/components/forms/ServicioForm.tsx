@@ -35,6 +35,10 @@ import { CreatableCombobox } from '@/components/shared/CreatableCombobox'
 import { DatePickerInput } from '@/components/shared/DatePickerInput'
 import { useToast } from '@/hooks/use-toast'
 import {
+  isInstallationOrRetiroServiceType,
+  isInstallationServiceType,
+} from '@/lib/service-types'
+import {
   crearClienteSchema,
   crearMaquinaSchema,
   type CrearClienteInput,
@@ -200,7 +204,7 @@ interface TipoServicioDefaults {
 function getTipoServicioDefaults(tipoServicio: string): TipoServicioDefaults {
   const normalized = tipoServicio.trim().toUpperCase()
 
-  if (normalized.includes('INSTALACION') || normalized.includes('RETIRO')) {
+  if (isInstallationOrRetiroServiceType(tipoServicio)) {
     return {
       clase_orden: 'ZSI2',
       costo_mano_obra: COSTO_MANO_OBRA_DEFAULT,
@@ -378,8 +382,8 @@ export function ServicioForm({
   const tecnicoSeleccionado = watch('tecnico_id')
   const fechaSolicitudCapturada = watch('fecha_solicitud') ?? null
   const fechaServicioCapturada = watch('fecha_servicio') ?? null
-  const isInstalacion = tipoServicioValue.trim().toUpperCase().includes('INSTALACION')
-  const wasOriginalInstalacion = Boolean(servicio?.tipo_servicio?.trim().toUpperCase().includes('INSTALACION'))
+  const isInstalacion = isInstallationServiceType(tipoServicioValue)
+  const wasOriginalInstalacion = isInstallationServiceType(servicio?.tipo_servicio)
   const maxFechaSolicitud = fechaServicioCapturada && fechaServicioCapturada < todayIso
     ? fechaServicioCapturada
     : todayIso

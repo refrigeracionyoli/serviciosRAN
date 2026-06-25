@@ -17,6 +17,7 @@ import {
   upsertEntityLink,
 } from '@/lib/offline/cache'
 import { offlineDb } from '@/lib/offline/db'
+import { isRetiroServiceType } from '@/lib/service-types'
 import { supabase } from '@/lib/supabase'
 import type {
   MaquinaEnTaller,
@@ -133,7 +134,7 @@ export async function queueRegistrarEntradaTaller(
   const clienteId = input.cliente_id ?? servicio?.cliente_id ?? null
   const orden = input.orden ?? servicio?.orden ?? null
   const diagnostico = toNullableText(input.diagnostico)
-  const motivo = input.motivo ?? (servicio?.tipo_servicio?.toUpperCase().includes('RETIRO') ? 'retiro' : 'manual')
+  const motivo = input.motivo ?? (isRetiroServiceType(servicio?.tipo_servicio) ? 'retiro' : 'manual')
   const origen = motivo === 'retiro' ? 'cliente' : motivo === 'instalacion' ? 'instalacion' : 'manual'
   const localId = createLocalNumberId()
   const localMovementId = createLocalNumberId()
@@ -465,7 +466,7 @@ export async function syncRegistrarEntradaTaller(ownerId: string, payload: Talle
   )
   const orden = payload.input.orden ?? servicio?.orden ?? null
   const diagnostico = toNullableText(payload.input.diagnostico)
-  const motivo = payload.input.motivo ?? (servicio?.tipo_servicio?.toUpperCase().includes('RETIRO') ? 'retiro' : 'manual')
+  const motivo = payload.input.motivo ?? (isRetiroServiceType(servicio?.tipo_servicio) ? 'retiro' : 'manual')
   const origen = motivo === 'retiro' ? 'cliente' : motivo === 'instalacion' ? 'instalacion' : 'manual'
 
   const { data: registroAbierto, error: registroAbiertoError } = await supabase

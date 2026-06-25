@@ -904,6 +904,7 @@ export function useEliminarServicioMutation() {
         qc.invalidateQueries({ queryKey: inventarioKeys.all, refetchType: 'active' }),
         qc.invalidateQueries({ queryKey: inventarioKeys.tecnicoRoot, refetchType: 'active' }),
         qc.invalidateQueries({ queryKey: inventarioKeys.movimientosRoot, refetchType: 'active' }),
+        qc.invalidateQueries({ queryKey: maquinasKeys.all, refetchType: 'active' }),
         qc.invalidateQueries({ queryKey: maquinasTallerKeys.all, refetchType: 'active' }),
       ])
     },

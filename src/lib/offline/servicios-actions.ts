@@ -4,6 +4,7 @@ import {
   persistOfflineCommand,
 } from '@/lib/offline/commands'
 import {
+  buildCacheKey,
   createLocalNumberId,
   getCachedClienteById,
   getCachedInventarioItemById,
@@ -39,6 +40,10 @@ import {
 import { assertCurrentUserCanWriteRemoteService } from '@/lib/offline/service-access'
 import { offlineDb } from '@/lib/offline/db'
 import { isLikelyUniqueViolation } from '@/lib/offline/network'
+import {
+  isInstallationServiceType,
+  normalizeServiceType,
+} from '@/lib/service-types'
 import { supabase } from '@/lib/supabase'
 import { formatLocalIsoDate } from '@/lib/utils'
 import type { CierreInput } from '@/schemas/cliente.schema'
@@ -626,10 +631,6 @@ function isTerminalServiceStatus(status: Servicio['status'] | null | undefined):
   return status === 'completado' || status === 'cerrado'
 }
 
-function isInstallationServiceType(tipoServicio: string | null | undefined): boolean {
-  return Boolean(tipoServicio?.trim().toUpperCase().includes('INSTALACION'))
-}
-
 function isPendingInstallationMachine(machine: Maquina | null | undefined): machine is Maquina {
   return Boolean(
     machine
@@ -638,6 +639,14 @@ function isPendingInstallationMachine(machine: Maquina | null | undefined): mach
     && machine.cliente_id == null
     && !machine.fecha_instalacion,
   )
+}
+
+function getCommandPayloadDataMaquinaId(payload: unknown): number | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const data = (payload as { data?: unknown }).data
+  if (typeof data !== 'object' || data === null) return null
+  const maquinaId = (data as { maquina_id?: unknown }).maquina_id
+  return typeof maquinaId === 'number' ? maquinaId : null
 }
 
 function getServiceWorkshopDate(service: Pick<Servicio, 'fecha_servicio'>): string {
@@ -696,7 +705,7 @@ async function applyLocalServiceWorkshopSync(
   const servicioSnapshot: Servicio = updated
   const cliente = updated.cliente_id ? await getCachedClienteById(ownerId, updated.cliente_id) : null
   const usuario = await getCachedProfileById(ownerId, ownerId)
-  const tipoServicio = updated.tipo_servicio.toUpperCase()
+  const tipoServicio = normalizeServiceType(updated.tipo_servicio)
 
   if (tipoServicio.includes('URBAN')) {
     const existingMovement = await findServiceWorkshopMovement(ownerId, updated.id, 'salida', 'urban')
@@ -948,41 +957,155 @@ export async function reconcileServiceWorkshopSnapshotsAfterSync(
   }
 }
 
-async function maybeArchivePendingInstallationMachineLocal(
+async function hasLocalPendingInstallationMachineReferences(
+  ownerId: string,
+  maquinaIds: Set<number>,
+  ignoredServiceId: number,
+): Promise<boolean> {
+  const [
+    servicios,
+    polizas,
+    mantenimientos,
+    maquinasTaller,
+    maquinasTallerMovimientos,
+    commands,
+  ] = await Promise.all([
+    offlineDb.servicios.where('ownerId').equals(ownerId).toArray(),
+    offlineDb.polizas.where('ownerId').equals(ownerId).toArray(),
+    offlineDb.mantenimientos.where('ownerId').equals(ownerId).toArray(),
+    offlineDb.maquinasTaller.where('ownerId').equals(ownerId).toArray(),
+    offlineDb.maquinasTallerMovimientos.where('ownerId').equals(ownerId).toArray(),
+    offlineDb.commands.where('ownerId').equals(ownerId).toArray(),
+  ])
+
+  if (servicios.some((row) => row.id !== ignoredServiceId && typeof row.maquina_id === 'number' && maquinaIds.has(row.maquina_id))) return true
+  if (polizas.some((row) => maquinaIds.has(row.maquina_id))) return true
+  if (mantenimientos.some((row) => maquinaIds.has(row.maquina_id))) return true
+  if (maquinasTaller.some((row) => maquinaIds.has(row.maquina_id))) return true
+  if (maquinasTallerMovimientos.some((row) => maquinaIds.has(row.maquina_id))) return true
+
+  return commands.some((command) => (
+    command.status !== 'done'
+    && command.type !== 'maquina.create'
+    && (
+      (command.entityType === 'maquina' && command.entityId != null && maquinaIds.has(Number(command.entityId)))
+      || (() => {
+        const maquinaId = getCommandPayloadDataMaquinaId(command.payload)
+        return typeof maquinaId === 'number' && maquinaIds.has(maquinaId)
+      })()
+    )
+  ))
+}
+
+async function removePendingLocalMaquinaCreateCommands(ownerId: string, maquinaIds: Set<number>) {
+  const commands = await offlineDb.commands.where('ownerId').equals(ownerId).toArray()
+  const commandIds = commands
+    .filter((command) => (
+      command.type === 'maquina.create'
+      && command.status !== 'done'
+      && command.entityId != null
+      && maquinaIds.has(Number(command.entityId))
+    ))
+    .map((command) => command.id)
+
+  if (commandIds.length > 0) {
+    await offlineDb.commands.bulkDelete(commandIds)
+  }
+}
+
+async function deletePendingInstallationMachineCache(ownerId: string, maquinaIds: Set<number>) {
+  if (maquinaIds.size === 0) return
+
+  await offlineDb.maquinas.bulkDelete(
+    Array.from(maquinaIds).map((maquinaId) => buildCacheKey(ownerId, maquinaId)),
+  )
+
+  const idValues = new Set(Array.from(maquinaIds).map(String))
+  const links = await offlineDb.entityLinks
+    .where('[ownerId+entityType]')
+    .equals([ownerId, 'maquina'])
+    .toArray()
+
+  const linkKeys = links
+    .filter((link) => idValues.has(link.localId) || idValues.has(link.remoteId))
+    .map((link) => link.cacheKey)
+
+  if (linkKeys.length > 0) {
+    await offlineDb.entityLinks.bulkDelete(linkKeys)
+  }
+}
+
+async function maybeDeletePendingInstallationMachineLocal(
   ownerId: string,
   previous: Servicio,
   updated: Servicio,
 ) {
   if (!isInstallationServiceType(previous.tipo_servicio) || isInstallationServiceType(updated.tipo_servicio)) return
   if (!previous.maquina_id) return
+  if (updated.maquina_id === previous.maquina_id) return
 
   const machine = previous.maquina ?? await getCachedMaquinaById(ownerId, previous.maquina_id)
   if (!isPendingInstallationMachine(machine)) return
 
-  const openRecord = await findLatestOpenTallerRecord(ownerId, previous.maquina_id)
-  if (openRecord) return
+  const remoteId = await resolveLinkedNumberId(ownerId, 'maquina', previous.maquina_id)
+  const candidateIds = new Set<number>([previous.maquina_id])
+  if (remoteId) candidateIds.add(remoteId)
 
-  const services = await offlineDb.servicios.where('ownerId').equals(ownerId).toArray()
-  const referencedByOtherService = services.some((service) => (
-    service.id !== previous.id
-    && service.maquina_id === previous.maquina_id
-  ))
+  if (await hasLocalPendingInstallationMachineReferences(ownerId, candidateIds, previous.id)) return
 
-  if (referencedByOtherService) return
-
-  await upsertCachedMaquinas(ownerId, [{
-    ...machine,
-    activo: false,
-  }])
+  await removePendingLocalMaquinaCreateCommands(ownerId, candidateIds)
+  await deletePendingInstallationMachineCache(ownerId, candidateIds)
 }
 
-async function maybeArchivePendingInstallationMachineRemote(
+async function hasRemotePendingInstallationMachineReferences(
+  maquinaId: number,
+  ignoredServiceId: number,
+): Promise<boolean> {
+  const [
+    servicios,
+    polizas,
+    mantenimientos,
+    maquinasTaller,
+    maquinasTallerMovimientos,
+  ] = await Promise.all([
+    supabase
+      .from('servicios')
+      .select('id')
+      .eq('maquina_id', maquinaId)
+      .neq('id', ignoredServiceId)
+      .limit(1),
+    supabase.from('polizas').select('id').eq('maquina_id', maquinaId).limit(1),
+    supabase.from('mantenimientos_poliza').select('id').eq('maquina_id', maquinaId).limit(1),
+    supabase.from('maquinas_en_taller').select('id').eq('maquina_id', maquinaId).limit(1),
+    supabase.from('maquinas_taller_movimientos').select('id').eq('maquina_id', maquinaId).limit(1),
+  ])
+
+  const firstError = [
+    servicios.error,
+    polizas.error,
+    mantenimientos.error,
+    maquinasTaller.error,
+    maquinasTallerMovimientos.error,
+  ].find(Boolean)
+  if (firstError) throw firstError
+
+  return [
+    servicios.data,
+    polizas.data,
+    mantenimientos.data,
+    maquinasTaller.data,
+    maquinasTallerMovimientos.data,
+  ].some((rows) => (rows ?? []).length > 0)
+}
+
+async function maybeDeletePendingInstallationMachineRemote(
   ownerId: string,
   previous: Servicio,
   updated: Servicio,
 ) {
   if (!isInstallationServiceType(previous.tipo_servicio) || isInstallationServiceType(updated.tipo_servicio)) return
   if (!previous.maquina_id) return
+  if (updated.maquina_id === previous.maquina_id) return
 
   const { data: machineRow, error: machineError } = await supabase
     .from('maquinas')
@@ -995,37 +1118,20 @@ async function maybeArchivePendingInstallationMachineRemote(
   const machine = machineRow as Maquina
   if (!isPendingInstallationMachine(machine)) return
 
-  const { data: openRecordRows, error: openRecordError } = await supabase
-    .from('maquinas_en_taller')
-    .select('id')
-    .eq('maquina_id', previous.maquina_id)
-    .is('fecha_salida', null)
-    .limit(1)
+  try {
+    if (await hasRemotePendingInstallationMachineReferences(previous.maquina_id, updated.id)) return
+  } catch {
+    return
+  }
 
-  if (openRecordError) return
-  if ((openRecordRows ?? []).length > 0) return
-
-  const { data: otherServiceRows, error: otherServiceError } = await supabase
-    .from('servicios')
-    .select('id')
-    .eq('maquina_id', previous.maquina_id)
-    .neq('id', updated.id)
-    .limit(1)
-
-  if (otherServiceError) return
-  if ((otherServiceRows ?? []).length > 0) return
-
-  const { error: archiveError } = await supabase
+  const { error: deleteError } = await supabase
     .from('maquinas')
-    .update({ activo: false })
+    .delete()
     .eq('id', previous.maquina_id)
 
-  if (archiveError) return
+  if (deleteError) return
 
-  await upsertCachedMaquinas(ownerId, [{
-    ...machine,
-    activo: false,
-  }])
+  await deletePendingInstallationMachineCache(ownerId, new Set([previous.maquina_id]))
 }
 
 export interface ServicioCreatePayload {
@@ -1206,9 +1312,12 @@ export async function queueServicioUpdate(
     'rw',
     [
       offlineDb.commands,
+      offlineDb.entityLinks,
       offlineDb.servicios,
       offlineDb.clientes,
       offlineDb.maquinas,
+      offlineDb.polizas,
+      offlineDb.mantenimientos,
       offlineDb.profiles,
       offlineDb.maquinasTaller,
       offlineDb.maquinasTallerMovimientos,
@@ -1217,7 +1326,7 @@ export async function queueServicioUpdate(
       await persistOfflineCommand(command)
       await upsertCachedServicio(ownerId, updated)
       await applyLocalServiceWorkshopSync(ownerId, existing, updated)
-      await maybeArchivePendingInstallationMachineLocal(ownerId, existing, updated)
+      await maybeDeletePendingInstallationMachineLocal(ownerId, existing, updated)
     },
   )
 
@@ -1702,7 +1811,7 @@ export async function syncServicioUpdate(ownerId: string, payload: ServicioUpdat
   const syncedService = updated as Servicio
   await upsertCachedServicio(ownerId, syncedService)
   if (previousService) {
-    await maybeArchivePendingInstallationMachineRemote(ownerId, previousService, syncedService)
+    await maybeDeletePendingInstallationMachineRemote(ownerId, previousService, syncedService)
   }
   await reconcileServiceWorkshopSnapshotsAfterSync(ownerId, payload.serviceId, syncedService)
   return syncedService

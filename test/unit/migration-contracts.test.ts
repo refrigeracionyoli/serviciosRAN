@@ -102,6 +102,41 @@ describe('database and edge-function contracts', () => {
     expect(lifecycleRepair).toContain("status = 'en_taller'")
   })
 
+  it('normalizes accented workshop service types without backfilling existing records', () => {
+    const lifecycleNormalize = read('supabase/migrations/033_normalize_workshop_service_lifecycle.sql')
+
+    expect(lifecycleNormalize).toContain('normalize_workshop_service_type')
+    expect(lifecycleNormalize).toContain("'ÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÕÚÙÜÛÑ'")
+    expect(lifecycleNormalize).toContain("public.normalize_workshop_service_type(new.tipo_servicio)")
+    expect(lifecycleNormalize).toContain("fecha_salida = coalesce(fecha_salida, v_fecha)")
+    expect(lifecycleNormalize).toContain("status = 'en_taller'")
+    expect(lifecycleNormalize).toContain("status = 'operando'")
+    expect(lifecycleNormalize).toContain("and motivo = 'retiro'")
+    expect(lifecycleNormalize).toContain("and motivo = 'instalacion'")
+    expect(lifecycleNormalize).not.toContain('select distinct on')
+    expect(lifecycleNormalize).not.toContain('do $$')
+  })
+
+  it('deletes only pure temporary installation machines when their service is deleted', () => {
+    const deleteServicio = read('supabase/migrations/034_delete_pending_installation_machine_on_service_delete.sql')
+
+    expect(deleteServicio).toContain('v_pending_installation_machine_id')
+    expect(deleteServicio).toContain('public.normalize_workshop_service_type(v_servicio.tipo_servicio)')
+    expect(deleteServicio).toContain("like '%INSTALACION%'")
+    expect(deleteServicio).toContain('maquinas.activo = true')
+    expect(deleteServicio).toContain("maquinas.status = 'en_taller'")
+    expect(deleteServicio).toContain('maquinas.cliente_id is null')
+    expect(deleteServicio).toContain('maquinas.fecha_instalacion is null')
+    expect(deleteServicio).toContain('other_servicios.id <> p_servicio_id')
+    expect(deleteServicio).toContain('from public.polizas')
+    expect(deleteServicio).toContain('from public.mantenimientos_poliza')
+    expect(deleteServicio).toContain('from public.maquinas_en_taller')
+    expect(deleteServicio).toContain('from public.maquinas_taller_movimientos')
+    expect(deleteServicio).toContain('delete from public.servicios')
+    expect(deleteServicio).toContain('delete from public.maquinas')
+    expect(deleteServicio).not.toContain('set activo = false')
+  })
+
   it('publishes all realtime tables used by query invalidation hooks', () => {
     for (const table of [
       'servicios',

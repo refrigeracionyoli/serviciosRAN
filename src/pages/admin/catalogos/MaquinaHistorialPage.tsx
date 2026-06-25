@@ -22,6 +22,7 @@ import { useMaquinasQuery } from '@/hooks/use-maquinas'
 import { useMantenimientosQuery } from '@/hooks/use-mantenimientos'
 import { usePolizasQuery } from '@/hooks/use-polizas'
 import { useServiciosQuery } from '@/hooks/use-servicios'
+import { normalizeServiceType } from '@/lib/service-types'
 import { formatDate, formatMXN } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
 
@@ -63,7 +64,7 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 function getTipoBadgeClass(tipo: string, origen: HistorialOrigen): string {
-  const normalized = tipo.toUpperCase()
+  const normalized = normalizeServiceType(tipo)
 
   if (origen === 'mantenimiento' || normalized.includes('MTTO')) {
     return 'border-blue-200 bg-blue-100 text-blue-800'
