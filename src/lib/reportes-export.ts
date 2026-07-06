@@ -1,5 +1,6 @@
 import UZIP from 'uzip'
 import type { Workbook, Worksheet } from 'exceljs'
+import { convertHeicBlobToJpeg } from '@/lib/image-compat'
 import { downloadEvidenciaBlob } from '@/lib/r2'
 import { supabase } from '@/lib/supabase'
 import { isOrdenServicioFilename } from '@/lib/tecnico/servicio-evidencias'
@@ -2383,7 +2384,7 @@ async function toEmbeddedImage(
   profile: ImageExportProfile,
   filename?: string,
 ): Promise<EmbeddedImage> {
-  const imageBlob = getDecodableImageBlob(blob, filename)
+  const imageBlob = getDecodableImageBlob(await convertHeicBlobToJpeg(blob), filename)
   // Convertir a JPEG reescalado baja mucho el XLSX y elimina metadata pesada de fotos de celular.
   if (typeof createImageBitmap === 'function' && typeof OffscreenCanvas !== 'undefined') {
     try {

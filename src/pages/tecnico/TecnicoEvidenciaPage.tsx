@@ -133,7 +133,7 @@ function FotoTile({
   showDelete?: boolean
   disableDelete?: boolean
 }) {
-  const { data } = useEvidenciaUrlQuery(evidencia.r2_key)
+  const { data } = useEvidenciaUrlQuery(evidencia.r2_key, evidencia)
   const downloadUrl = data?.downloadUrl
   const isPending = evidencia.id < 0
   const canPreview = Boolean(downloadUrl && evidencia.mime_type?.startsWith('image/'))
@@ -204,7 +204,7 @@ function OrdenServicioCard({
   readOnly?: boolean
   disableDelete?: boolean
 }) {
-  const { data } = useEvidenciaUrlQuery(evidencia?.r2_key ?? null)
+  const { data } = useEvidenciaUrlQuery(evidencia?.r2_key ?? null, evidencia)
   const downloadUrl = data?.downloadUrl
   const isPending = Boolean(evidencia && evidencia.id < 0)
   const isImage = Boolean(evidencia?.mime_type?.startsWith('image/'))

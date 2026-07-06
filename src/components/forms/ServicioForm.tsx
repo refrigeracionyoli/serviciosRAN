@@ -246,7 +246,7 @@ function EvidenciaThumbnail({
   onRequestDelete,
   onPreview,
 }: EvidenciaThumbnailProps) {
-  const { data } = useEvidenciaUrlQuery(evidencia.r2_key)
+  const { data } = useEvidenciaUrlQuery(evidencia.r2_key, evidencia)
   const downloadUrl = data?.downloadUrl
   const displayFilename = getDisplayFilename(evidencia.filename)
   const isOrdenServicio = isOrdenServicioFilename(evidencia.filename)

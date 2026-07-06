@@ -37,7 +37,7 @@ function isOrdenServicioFilename(filename: string): boolean {
 }
 
 function EvidenciaCard({ evidencia, displayFilename, onPreview }: EvidenciaCardProps) {
-  const { data } = useEvidenciaUrlQuery(evidencia.r2_key)
+  const { data } = useEvidenciaUrlQuery(evidencia.r2_key, evidencia)
   const downloadUrl = data?.downloadUrl
   const isOrdenServicio = isOrdenServicioFilename(evidencia.filename)
 
@@ -110,7 +110,7 @@ export function ServicioDetallePage() {
     [evidencias],
   )
 
-  const { data: evidenciaOrdenUrlData } = useEvidenciaUrlQuery(evidenciaOrden?.r2_key ?? null)
+  const { data: evidenciaOrdenUrlData } = useEvidenciaUrlQuery(evidenciaOrden?.r2_key ?? null, evidenciaOrden)
   const evidenciaOrdenUrl = evidenciaOrdenUrlData?.downloadUrl
 
   if (isLoading) return <AdminPageLoadingSkeleton />

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import imageCompression from 'browser-image-compression'
 import { supabase } from '@/lib/supabase'
-import { deleteEvidencia, getPresignedGetUrl } from '@/lib/r2'
+import { deleteEvidencia, downloadEvidenciaBlob, getPresignedGetUrl } from '@/lib/r2'
 import { useAuth } from '@/hooks/use-auth'
 import {
   deleteCommand,
@@ -22,6 +22,14 @@ import { withOfflineFallback } from '@/lib/offline/query-fallback'
 import { isBrowserOnline, isLikelyNetworkError } from '@/lib/offline/network'
 import { getCurrentSessionUser } from '@/lib/offline/session'
 import { settleQueuedCommand } from '@/lib/offline/sync-engine'
+import {
+  blobHasHeicSignature,
+  blobToDataUrl,
+  convertHeicBlobToJpeg,
+  convertHeicFileToJpeg,
+  hasHeicFormatHint,
+  toJpegFilename,
+} from '@/lib/image-compat'
 import type { Evidencia, ServicioStatus } from '@/types/domain.types'
 
 interface PerfilCompresion {
@@ -74,43 +82,80 @@ function isOrdenServicioUpload(filename: string): boolean {
 }
 
 function buildCompressedFile(blob: Blob, originalName: string): File {
-  return new File([blob], originalName, { type: blob.type || 'image/jpeg' })
+  return new File([blob], toJpegFilename(originalName), { type: 'image/jpeg' })
+}
+
+async function compressImageFile(file: File, perfil: PerfilCompresion): Promise<File> {
+  const primeraPasada = await imageCompression(file, {
+    maxSizeMB: perfil.objetivoMB,
+    maxWidthOrHeight: perfil.maxLadoPx,
+    initialQuality: perfil.calidadInicial,
+    fileType: 'image/jpeg',
+    useWebWorker: true,
+    maxIteration: 15,
+  })
+
+  let candidato = buildCompressedFile(primeraPasada, file.name)
+
+  if (candidato.size > perfil.limiteSuaveBytes) {
+    const segundaPasada = await imageCompression(candidato, {
+      maxSizeMB: Math.max(perfil.objetivoMB * 0.75, 0.2),
+      maxWidthOrHeight: Math.max(perfil.maxLadoPx - 180, 960),
+      initialQuality: Math.max(perfil.calidadInicial - 0.14, perfil.calidadMinima),
+      fileType: 'image/jpeg',
+      useWebWorker: true,
+      maxIteration: 20,
+    })
+
+    const masCompacta = buildCompressedFile(segundaPasada, file.name)
+    if (masCompacta.size < candidato.size) {
+      candidato = masCompacta
+    }
+  }
+
+  return candidato
 }
 
 async function comprimirParaR2(file: File, esOrdenServicio: boolean): Promise<File> {
   const perfil = esOrdenServicio ? PERFIL_ORDEN_SERVICIO : PERFIL_EVIDENCIA
+  const isHeic = await blobHasHeicSignature(file)
 
   try {
-    const primeraPasada = await imageCompression(file, {
-      maxSizeMB: perfil.objetivoMB,
-      maxWidthOrHeight: perfil.maxLadoPx,
-      initialQuality: perfil.calidadInicial,
-      fileType: 'image/jpeg',
-      useWebWorker: true,
-      maxIteration: 15,
-    })
-
-    let candidato = buildCompressedFile(primeraPasada, file.name)
-
-    if (candidato.size > perfil.limiteSuaveBytes) {
-      const segundaPasada = await imageCompression(candidato, {
-        maxSizeMB: Math.max(perfil.objetivoMB * 0.75, 0.2),
-        maxWidthOrHeight: Math.max(perfil.maxLadoPx - 180, 960),
-        initialQuality: Math.max(perfil.calidadInicial - 0.14, perfil.calidadMinima),
-        fileType: 'image/jpeg',
-        useWebWorker: true,
-        maxIteration: 20,
-      })
-
-      const masCompacta = buildCompressedFile(segundaPasada, file.name)
-      if (masCompacta.size < candidato.size) {
-        candidato = masCompacta
-      }
-    }
-
-    return candidato.size < file.size ? candidato : file
+    const candidato = await compressImageFile(file, perfil)
+    return isHeic || candidato.size < file.size ? candidato : file
   } catch {
-    return file
+    if (!isHeic) return file
+
+    const compatibleFile = await convertHeicFileToJpeg(file)
+
+    try {
+      const candidato = await compressImageFile(compatibleFile, perfil)
+      return candidato.size < compatibleFile.size ? candidato : compatibleFile
+    } catch {
+      return compatibleFile
+    }
+  }
+}
+
+async function buildCompatiblePreviewDataUrl(blob: Blob, filename: string | null | undefined): Promise<string> {
+  try {
+    const nativePreview = await compressImageFile(
+      new File([blob], filename || 'evidencia.heic', { type: blob.type || 'image/heic' }),
+      PERFIL_EVIDENCIA,
+    )
+    return blobToDataUrl(nativePreview)
+  } catch {
+    const compatibleBlob = await convertHeicBlobToJpeg(blob)
+
+    try {
+      const compressedPreview = await compressImageFile(
+        new File([compatibleBlob], toJpegFilename(filename), { type: 'image/jpeg' }),
+        PERFIL_EVIDENCIA,
+      )
+      return blobToDataUrl(compressedPreview)
+    } catch {
+      return blobToDataUrl(compatibleBlob)
+    }
   }
 }
 
@@ -331,11 +376,26 @@ export function useEliminarEvidenciaMutation(
   })
 }
 
-export function useEvidenciaUrlQuery(r2Key: string | null) {
+export function useEvidenciaUrlQuery(
+  r2Key: string | null,
+  evidencia?: Pick<Evidencia, 'filename' | 'mime_type'> | null,
+) {
   const { isAuthenticated, user } = useAuth()
+  const requiresCompatibility = hasHeicFormatHint({
+    filename: evidencia?.filename,
+    mimeType: evidencia?.mime_type,
+    r2Key,
+  })
 
   return useQuery({
-    queryKey: ['evidencias', 'url', user?.id ?? null, r2Key],
+    queryKey: [
+      'evidencias',
+      'url',
+      user?.id ?? null,
+      r2Key,
+      evidencia?.filename ?? null,
+      evidencia?.mime_type ?? null,
+    ],
     queryFn: async () => {
       if (!user?.id) {
         return { downloadUrl: '' }
@@ -343,6 +403,12 @@ export function useEvidenciaUrlQuery(r2Key: string | null) {
 
       const localUrl = await getLocalAttachmentUrl(user.id, r2Key)
       if (localUrl) {
+        if (requiresCompatibility) {
+          const response = await fetch(localUrl)
+          return {
+            downloadUrl: await buildCompatiblePreviewDataUrl(await response.blob(), evidencia?.filename),
+          }
+        }
         return { downloadUrl: localUrl }
       }
 
@@ -351,6 +417,12 @@ export function useEvidenciaUrlQuery(r2Key: string | null) {
       }
 
       try {
+        if (requiresCompatibility) {
+          const blob = await downloadEvidenciaBlob(r2Key!)
+          return {
+            downloadUrl: await buildCompatiblePreviewDataUrl(blob, evidencia?.filename),
+          }
+        }
         return await getPresignedGetUrl(r2Key!)
       } catch (error) {
         if (isLikelyNetworkError(error)) {
