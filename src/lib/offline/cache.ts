@@ -3,6 +3,7 @@ import type {
   Cierre,
   Cliente,
   Evidencia,
+  FiltrosMantenimiento,
   FiltrosServicio,
   InventarioTecnico,
   ItemInventario,
@@ -25,6 +26,7 @@ import {
   isInventarioTecnicoReturned,
   normalizeInventarioTecnicoRow,
 } from '@/lib/inventario-tecnico'
+import { formatLocalIsoDate } from '@/lib/utils'
 import {
   offlineDb,
   ensureOfflineDbReady,
@@ -1037,7 +1039,11 @@ export async function upsertCachedMantenimientos(ownerId: string, rows: Mantenim
   )
 }
 
-export async function getCachedMantenimientosSnapshot(ownerId: string, polizaId?: number): Promise<MantenimientoPoliza[]> {
+export async function getCachedMantenimientosSnapshot(
+  ownerId: string,
+  input?: number | FiltrosMantenimiento,
+): Promise<MantenimientoPoliza[]> {
+  const filtros = typeof input === 'number' ? { polizaId: input } : input
   const clientesById = await getClientesLookup(ownerId)
   const maquinasById = await getMaquinasLookup(ownerId, clientesById)
   const polizasById = await getPolizasLookup(ownerId, clientesById, maquinasById)
@@ -1048,7 +1054,19 @@ export async function getCachedMantenimientosSnapshot(ownerId: string, polizaId?
   return filterResolvedDuplicates(rows, lookup)
     .map((row) => hydrateMantenimientoFromLookup(row, maquinasById, clientesById, polizasById, profilesById))
     .filter((row): row is MantenimientoPoliza => Boolean(row))
-    .filter((row) => (polizaId ? row.poliza_id === polizaId : true))
+    .filter((row) => (filtros?.polizaId ? row.poliza_id === filtros.polizaId : true))
+    .filter((row) => (filtros?.maquinaId ? row.maquina_id === filtros.maquinaId : true))
+    .filter((row) => (filtros?.tecnicoId ? row.tecnico_id === filtros.tecnicoId : true))
+    .filter((row) => (
+      filtros?.statuses?.length ? filtros.statuses.includes(row.status) : true
+    ))
+    .filter((row) => {
+      if (!filtros?.fechaDesde && !filtros?.fechaHasta) return true
+      const fecha = row.fecha_visita ?? formatLocalIsoDate(new Date(row.created_at))
+      if (filtros.fechaDesde && fecha < filtros.fechaDesde) return false
+      if (filtros.fechaHasta && fecha > filtros.fechaHasta) return false
+      return true
+    })
     .sort((left, right) => {
       const leftDate = left.fecha_visita ?? left.created_at
       const rightDate = right.fecha_visita ?? right.created_at
@@ -1452,6 +1470,7 @@ function cachedServicioMatchesFilters(row: Servicio, filtros?: FiltrosServicio):
   if (filtros?.status && row.status !== filtros.status) return false
   if (filtros?.tecnicoId && row.tecnico_id !== filtros.tecnicoId) return false
   if (filtros?.clienteId && row.cliente_id !== filtros.clienteId) return false
+  if (filtros?.maquinaId && row.maquina_id !== filtros.maquinaId) return false
   if (filtros?.fechaDesde && (!row.fecha_servicio || row.fecha_servicio < filtros.fechaDesde)) return false
   if (filtros?.fechaHasta && (!row.fecha_servicio || row.fecha_servicio > filtros.fechaHasta)) return false
   if (filtros?.tipoServicio && row.tipo_servicio !== filtros.tipoServicio) return false

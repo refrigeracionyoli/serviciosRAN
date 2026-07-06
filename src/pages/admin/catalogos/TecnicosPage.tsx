@@ -52,7 +52,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useAuth } from '@/hooks/use-auth'
 import { useCambiarPasswordEmpleadoMutation, useEditarTecnicoMutation, useEmpleadosQuery } from '@/hooks/use-tecnicos'
 import { getPasswordPolicyError } from '@/lib/password-policy'
-import { useServiciosQuery } from '@/hooks/use-servicios'
+import { useServiciosTechnicianActivityQuery } from '@/hooks/use-servicios'
 import { cn } from '@/lib/utils'
 import { useFiltrosStore } from '@/stores/filtros.store'
 import type { Profile } from '@/types/domain.types'
@@ -174,26 +174,28 @@ export function TecnicosPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const deferredSearch = useDeferredValue(search.trim().toLowerCase())
   const setFiltros = useFiltrosStore((state) => state.setFiltros)
+  const now = new Date()
+  const monthStartIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+  const monthEndIso = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
 
   const { data: empleados = [], isLoading } = useEmpleadosQuery({ includeInactive: true })
-  const { data: servicios = [], isLoading: loadingServicios } = useServiciosQuery()
+  const { data: servicios = [], isLoading: loadingServicios } = useServiciosTechnicianActivityQuery(
+    monthStartIso,
+    monthEndIso,
+  )
   const { mutate: editarTecnico, isPending: isUpdatingTecnico } = useEditarTecnicoMutation()
   const { mutate: cambiarPasswordEmpleado, isPending: isUpdatingPassword } = useCambiarPasswordEmpleadoMutation()
   const passwordStrength = evaluatePasswordStrength(newPassword)
   const isPageLoading = isLoading || loadingServicios
 
   const serviciosMesPorTecnico = useMemo(() => {
-    const now = new Date()
-    const monthStartIso = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-    const monthEndIso = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString()
-
     return servicios.reduce<Record<string, number>>((acc, servicio) => {
       if (!servicio.tecnico_id) return acc
       if (servicio.created_at < monthStartIso || servicio.created_at >= monthEndIso) return acc
       acc[servicio.tecnico_id] = (acc[servicio.tecnico_id] ?? 0) + 1
       return acc
     }, {})
-  }, [servicios])
+  }, [monthEndIso, monthStartIso, servicios])
 
   const filteredEmpleados = useMemo(() => {
     return empleados.filter((empleado) => {

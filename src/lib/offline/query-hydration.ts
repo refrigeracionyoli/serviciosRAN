@@ -48,8 +48,14 @@ function buildMaquinasByCliente<T extends { cliente_id?: number | null }>(
   return grouped
 }
 
-export async function hydrateAdminOfflineQueryCache(ownerId: string, queryClient: QueryClient) {
+export async function hydrateAdminOfflineQueryCache(
+  ownerId: string,
+  queryClient: QueryClient,
+  options?: { updatedAt?: number },
+) {
   if (!ownerId) return
+
+  const updatedAt = options?.updatedAt ?? 0
 
   const [
     servicios,
@@ -96,7 +102,7 @@ export async function hydrateAdminOfflineQueryCache(ownerId: string, queryClient
   const maquinasActivasPorCliente = buildMaquinasByCliente(maquinasActivas, clienteIds)
   const maquinasCompletasPorCliente = buildMaquinasByCliente(maquinasCompletas, clienteIds)
 
-  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(), servicios)
+  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(), servicios, updatedAt)
   setOfflineHydratedQueryData(
     queryClient,
     serviciosKeys.list(normalizeServiciosListFilters({
@@ -109,33 +115,34 @@ export async function hydrateAdminOfflineQueryCache(ownerId: string, queryClient
       search: null,
     }) ?? undefined),
     servicios,
+    updatedAt,
   )
 
-  setOfflineHydratedQueryData(queryClient, inventarioKeys.list(false), inventarioActivo)
-  setOfflineHydratedQueryData(queryClient, inventarioKeys.list(true), inventarioCompleto)
-  setOfflineHydratedQueryData(queryClient, inventarioKeys.movimientos(), movimientosInventario)
+  setOfflineHydratedQueryData(queryClient, inventarioKeys.list(false), inventarioActivo, updatedAt)
+  setOfflineHydratedQueryData(queryClient, inventarioKeys.list(true), inventarioCompleto, updatedAt)
+  setOfflineHydratedQueryData(queryClient, inventarioKeys.movimientos(), movimientosInventario, updatedAt)
 
-  setOfflineHydratedQueryData(queryClient, polizasKeys.list(), polizas)
-  setOfflineHydratedQueryData(queryClient, polizasKeys.history(undefined), polizasHistorial)
-  setOfflineHydratedQueryData(queryClient, polizasKeys.pauses(), polizaPausas)
-  setOfflineHydratedQueryData(queryClient, mantenimientosKeys.list(undefined), mantenimientos)
+  setOfflineHydratedQueryData(queryClient, polizasKeys.list(), polizas, updatedAt)
+  setOfflineHydratedQueryData(queryClient, polizasKeys.history(undefined), polizasHistorial, updatedAt)
+  setOfflineHydratedQueryData(queryClient, polizasKeys.pauses(), polizaPausas, updatedAt)
+  setOfflineHydratedQueryData(queryClient, mantenimientosKeys.list(undefined), mantenimientos, updatedAt)
 
-  setOfflineHydratedQueryData(queryClient, clientesKeys.list(false), clientesActivos)
-  setOfflineHydratedQueryData(queryClient, clientesKeys.list(true), clientesCompletos)
+  setOfflineHydratedQueryData(queryClient, clientesKeys.list(false), clientesActivos, updatedAt)
+  setOfflineHydratedQueryData(queryClient, clientesKeys.list(true), clientesCompletos, updatedAt)
 
-  setOfflineHydratedQueryData(queryClient, maquinasKeys.list(undefined, false), maquinasActivas)
-  setOfflineHydratedQueryData(queryClient, maquinasKeys.list(undefined, true), maquinasCompletas)
+  setOfflineHydratedQueryData(queryClient, maquinasKeys.list(undefined, false), maquinasActivas, updatedAt)
+  setOfflineHydratedQueryData(queryClient, maquinasKeys.list(undefined, true), maquinasCompletas, updatedAt)
   for (const clienteId of clienteIds) {
-    setOfflineHydratedQueryData(queryClient, maquinasKeys.list(clienteId, false), maquinasActivasPorCliente.get(clienteId) ?? [])
-    setOfflineHydratedQueryData(queryClient, maquinasKeys.list(clienteId, true), maquinasCompletasPorCliente.get(clienteId) ?? [])
+    setOfflineHydratedQueryData(queryClient, maquinasKeys.list(clienteId, false), maquinasActivasPorCliente.get(clienteId) ?? [], updatedAt)
+    setOfflineHydratedQueryData(queryClient, maquinasKeys.list(clienteId, true), maquinasCompletasPorCliente.get(clienteId) ?? [], updatedAt)
   }
 
-  setOfflineHydratedQueryData(queryClient, tecnicosKeys.list(false), tecnicosActivos)
-  setOfflineHydratedQueryData(queryClient, tecnicosKeys.list(true), tecnicosCompletos)
-  setOfflineHydratedQueryData(queryClient, tecnicosKeys.empleadosList(false), empleadosActivos)
-  setOfflineHydratedQueryData(queryClient, tecnicosKeys.empleadosList(true), empleadosCompletos)
+  setOfflineHydratedQueryData(queryClient, tecnicosKeys.list(false), tecnicosActivos, updatedAt)
+  setOfflineHydratedQueryData(queryClient, tecnicosKeys.list(true), tecnicosCompletos, updatedAt)
+  setOfflineHydratedQueryData(queryClient, tecnicosKeys.empleadosList(false), empleadosActivos, updatedAt)
+  setOfflineHydratedQueryData(queryClient, tecnicosKeys.empleadosList(true), empleadosCompletos, updatedAt)
 
-  setOfflineHydratedQueryData(queryClient, maquinasTallerKeys.list(true), maquinasTallerAbiertas)
-  setOfflineHydratedQueryData(queryClient, maquinasTallerKeys.list(false), maquinasTallerTodas)
-  setOfflineHydratedQueryData(queryClient, maquinasTallerKeys.movimientos(undefined), maquinasTallerMovimientos)
+  setOfflineHydratedQueryData(queryClient, maquinasTallerKeys.list(true), maquinasTallerAbiertas, updatedAt)
+  setOfflineHydratedQueryData(queryClient, maquinasTallerKeys.list(false), maquinasTallerTodas, updatedAt)
+  setOfflineHydratedQueryData(queryClient, maquinasTallerKeys.movimientos(undefined), maquinasTallerMovimientos, updatedAt)
 }

@@ -26,8 +26,9 @@ import { HorizontalScrollArea } from '@/components/shared/HorizontalScrollArea'
 import { MaquinaStatusBadge } from '@/components/shared/StatusBadge'
 import { useMaquinasQuery } from '@/hooks/use-maquinas'
 import { useMantenimientosQuery } from '@/hooks/use-mantenimientos'
-import { useServiciosQuery } from '@/hooks/use-servicios'
-import type { MaquinaStatus, Servicio } from '@/types/domain.types'
+import { useServiciosMachineActivityQuery, type ServicioMachineActivity } from '@/hooks/use-servicios'
+import { formatLocalIsoDate } from '@/lib/utils'
+import type { MaquinaStatus } from '@/types/domain.types'
 import { CatalogosSubNav } from './CatalogosSubNav'
 
 const PAGE_SIZE = 10
@@ -60,7 +61,7 @@ function isSameMonth(value: string | null | undefined, reference: Date): boolean
     && date.getMonth() === reference.getMonth()
 }
 
-function isHistoricalExcelImport(servicio: Servicio): boolean {
+function isHistoricalExcelImport(servicio: ServicioMachineActivity): boolean {
   return servicio.status === 'cerrado'
     && servicio.tecnico_id == null
     && Number(servicio.costo_refacciones ?? 0) === 0
@@ -74,10 +75,27 @@ export function MaquinasPage() {
   const [status, setStatus] = useState<MaquinaStatusFilter>('all')
   const [page, setPage] = useState(1)
   const deferredSearch = useDeferredValue(search.trim().toLowerCase())
+  const activityReferenceDate = useMemo(() => new Date(), [])
+  const activityMonthStart = formatLocalIsoDate(new Date(
+    activityReferenceDate.getFullYear(),
+    activityReferenceDate.getMonth(),
+    1,
+  ))
+  const activityMonthEnd = formatLocalIsoDate(new Date(
+    activityReferenceDate.getFullYear(),
+    activityReferenceDate.getMonth() + 1,
+    0,
+  ))
 
   const { data: maquinas = [], isLoading } = useMaquinasQuery({ includeInactive: true })
-  const { data: servicios = [], isLoading: loadingServicios } = useServiciosQuery()
-  const { data: mantenimientos = [], isLoading: loadingMantenimientos } = useMantenimientosQuery()
+  const { data: servicios = [], isLoading: loadingServicios } = useServiciosMachineActivityQuery(
+    activityMonthStart,
+    activityMonthEnd,
+  )
+  const { data: mantenimientos = [], isLoading: loadingMantenimientos } = useMantenimientosQuery({
+    fechaDesde: activityMonthStart,
+    fechaHasta: activityMonthEnd,
+  })
   const isPageLoading = isLoading || loadingServicios || loadingMantenimientos
   const maquinasInstaladas = useMemo(
     () => maquinas.filter((maquina) => maquina.activo && maquina.status === 'operando' && maquina.cliente_id != null),
@@ -85,18 +103,16 @@ export function MaquinasPage() {
   )
 
   const actividadMes = useMemo(() => {
-    const now = new Date()
-
     const rows = [
       ...servicios
         .filter((servicio) => (
           servicio.maquina_id
           && !isHistoricalExcelImport(servicio)
-          && isSameMonth(servicio.fecha_servicio ?? servicio.fecha_solicitud ?? servicio.created_at, now)
+          && isSameMonth(servicio.fecha_servicio ?? servicio.fecha_solicitud ?? servicio.created_at, activityReferenceDate)
         ))
         .map((servicio) => ({ maquina_id: servicio.maquina_id })),
       ...mantenimientos
-        .filter((mantenimiento) => mantenimiento.maquina_id && isSameMonth(mantenimiento.fecha_visita ?? mantenimiento.created_at, now))
+        .filter((mantenimiento) => mantenimiento.maquina_id && isSameMonth(mantenimiento.fecha_visita ?? mantenimiento.created_at, activityReferenceDate))
         .map((mantenimiento) => ({ maquina_id: mantenimiento.maquina_id })),
     ]
 
@@ -110,7 +126,7 @@ export function MaquinasPage() {
       total: rows.length,
       porMaquina,
     }
-  }, [mantenimientos, servicios])
+  }, [activityReferenceDate, mantenimientos, servicios])
 
   const filteredMaquinas = useMemo(() => {
     return maquinasInstaladas.filter((maquina) => {

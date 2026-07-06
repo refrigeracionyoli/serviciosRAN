@@ -16,6 +16,7 @@ import { formatLocalIsoDate } from '@/lib/utils'
 export interface HydrateTecnicoOfflineQueryCacheOptions {
   fecha?: string
   tecnicoId?: string
+  updatedAt?: number
 }
 
 export async function hydrateTecnicoOfflineQueryCache(
@@ -27,6 +28,7 @@ export async function hydrateTecnicoOfflineQueryCache(
 
   const fecha = options?.fecha ?? formatLocalIsoDate(new Date())
   const tecnicoId = options?.tecnicoId ?? ownerId
+  const updatedAt = options?.updatedAt ?? 0
   const filtrosServicios = {
     status: 'en_ruta' as const,
     tecnicoId,
@@ -48,10 +50,10 @@ export async function hydrateTecnicoOfflineQueryCache(
     getCachedInventarioTecnicoSnapshot(ownerId, { fecha, tecnicoId }),
   ])
 
-  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(filtrosServicios), serviciosHoy)
-  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(filtrosServiciosCompletados), serviciosCompletadosHoy)
-  setOfflineHydratedQueryData(queryClient, inventarioKeys.list(false), inventarioActivo)
-  setOfflineHydratedQueryData(queryClient, inventarioKeys.tecnico(fecha, tecnicoId), inventarioTecnicoHoy)
+  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(filtrosServicios), serviciosHoy, updatedAt)
+  setOfflineHydratedQueryData(queryClient, serviciosKeys.list(filtrosServiciosCompletados), serviciosCompletadosHoy, updatedAt)
+  setOfflineHydratedQueryData(queryClient, inventarioKeys.list(false), inventarioActivo, updatedAt)
+  setOfflineHydratedQueryData(queryClient, inventarioKeys.tecnico(fecha, tecnicoId), inventarioTecnicoHoy, updatedAt)
 
   const serviciosById = new Map<number, typeof serviciosHoy[number]>()
   for (const servicio of [...serviciosHoy, ...serviciosCompletadosHoy]) {
@@ -66,9 +68,9 @@ export async function hydrateTecnicoOfflineQueryCache(
         getCachedServicioRefaccionesSnapshot(ownerId, servicio.id),
       ])
 
-      setOfflineHydratedQueryData(queryClient, serviciosKeys.detail(servicio.id), detalle ?? servicio)
-      setOfflineHydratedQueryData(queryClient, evidenciasKeys.byServicio(servicio.id), evidencias)
-      setOfflineHydratedQueryData(queryClient, serviciosKeys.refacciones(servicio.id), refacciones)
+      setOfflineHydratedQueryData(queryClient, serviciosKeys.detail(servicio.id), detalle ?? servicio, updatedAt)
+      setOfflineHydratedQueryData(queryClient, evidenciasKeys.byServicio(servicio.id), evidencias, updatedAt)
+      setOfflineHydratedQueryData(queryClient, serviciosKeys.refacciones(servicio.id), refacciones, updatedAt)
     }),
   )
 }

@@ -112,7 +112,13 @@ export function TecnicoHomePage() {
   }, {
     enabled: Boolean(user?.id),
   })
-  const { data: mantenimientos = [], isLoading: isLoadingMantenimientos } = useMantenimientosQuery()
+  const { data: mantenimientos = [], isLoading: isLoadingMantenimientos } = useMantenimientosQuery({
+    tecnicoId: user?.id ?? null,
+    statuses: ['en_ruta', 'realizado'],
+    fechaDesde: today,
+    fechaHasta: today,
+    enabled: Boolean(user?.id),
+  })
 
   const serviciosDelDia = useMemo(() => {
     return servicios

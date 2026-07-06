@@ -54,6 +54,7 @@ interface NormalizedServiciosListFilters {
   status: FiltrosServicio['status']
   tecnicoId: string | null
   clienteId: number | null
+  maquinaId: number | null
   fechaDesde: string | null
   fechaHasta: string | null
   fechaCampo: ServicioDateFilterField
@@ -92,6 +93,30 @@ export interface ServiciosChunkQueryInput {
   sort: ServiciosListSort | null
 }
 
+export interface ServicioClienteReference {
+  cliente_id: number | null
+}
+
+export interface ServicioCatalogMetadata {
+  tipo_servicio: string
+  clase_orden: string | null
+}
+
+export type ServicioTechnicianActivity = Pick<Servicio, 'tecnico_id' | 'created_at'>
+
+export type ServicioMachineActivity = Pick<
+  Servicio,
+  | 'id'
+  | 'maquina_id'
+  | 'tecnico_id'
+  | 'status'
+  | 'fecha_servicio'
+  | 'fecha_solicitud'
+  | 'created_at'
+  | 'costo_refacciones'
+  | 'costo_mano_obra'
+>
+
 interface ServiciosChunkResult {
   rows: Servicio[]
   totalCount: number
@@ -104,6 +129,7 @@ export function normalizeServiciosListFilters(
     status: filtros?.status ?? null,
     tecnicoId: filtros?.tecnicoId ?? null,
     clienteId: filtros?.clienteId ?? null,
+    maquinaId: filtros?.maquinaId ?? null,
     fechaDesde: filtros?.fechaDesde ?? null,
     fechaHasta: filtros?.fechaHasta ?? null,
     fechaCampo: filtros?.fechaCampo ?? 'servicio',
@@ -115,6 +141,7 @@ export function normalizeServiciosListFilters(
     normalized.status
     || normalized.tecnicoId
     || normalized.clienteId
+    || normalized.maquinaId
     || normalized.fechaDesde
     || normalized.fechaHasta
     || normalized.tipoServicio
@@ -139,6 +166,18 @@ export const serviciosKeys = {
   ] as const,
   detail: (id: number) => ['servicios', 'detail', id] as const,
   refacciones: (id: number) => ['servicio-refacciones', id] as const,
+}
+
+export const serviciosSummaryKeys = {
+  all: ['servicios-summary'] as const,
+  clienteReferences: () => ['servicios-summary', 'cliente-references'] as const,
+  catalogMetadata: () => ['servicios-summary', 'catalog-metadata'] as const,
+  technicianActivity: (fechaDesde: string, fechaHasta: string) => (
+    ['servicios-summary', 'technician-activity', fechaDesde, fechaHasta] as const
+  ),
+  machineActivity: (fechaDesde: string, fechaHasta: string) => (
+    ['servicios-summary', 'machine-activity', fechaDesde, fechaHasta] as const
+  ),
 }
 
 const SELECT_SERVICIO = `
@@ -211,6 +250,7 @@ function matchesServicioListFilters(
   if (filtros.status && servicio.status !== filtros.status) return false
   if (filtros.tecnicoId && servicio.tecnico_id !== filtros.tecnicoId) return false
   if (filtros.clienteId && servicio.cliente_id !== filtros.clienteId) return false
+  if (filtros.maquinaId && servicio.maquina_id !== filtros.maquinaId) return false
   const fecha = getServicioDateForFilter(servicio, filtros.fechaCampo)
   if (filtros.fechaDesde && (!fecha || fecha < filtros.fechaDesde)) return false
   if (filtros.fechaHasta && (!fecha || fecha > filtros.fechaHasta)) return false
@@ -304,6 +344,53 @@ function sortServiciosChunkRows(rows: Servicio[], sort: ServiciosListSort | null
     if (result !== 0) return result * directionMultiplier
     return (right.created_at ?? '').localeCompare(left.created_at ?? '')
   })
+}
+
+function getLocalDateOnly(value: string): string | null {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value
+
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getLocalDateBoundaryIso(value: string, dayOffset = 0): string {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day + dayOffset).toISOString()
+}
+
+function isDateWithinRange(value: string | null, fechaDesde: string, fechaHasta: string): boolean {
+  if (!value) return false
+  const date = getLocalDateOnly(value)
+  return Boolean(date && date >= fechaDesde && date <= fechaHasta)
+}
+
+function getServicioActivityDate(servicio: Pick<Servicio, 'fecha_servicio' | 'fecha_solicitud' | 'created_at'>) {
+  return servicio.fecha_servicio ?? servicio.fecha_solicitud ?? servicio.created_at
+}
+
+function buildServicioActivityDateFilter(fechaDesde: string, fechaHasta: string): string {
+  const serviceDate = [
+    `fecha_servicio.gte.${fechaDesde}`,
+    `fecha_servicio.lte.${fechaHasta}`,
+  ]
+  const requestDate = [
+    'fecha_servicio.is.null',
+    `fecha_solicitud.gte.${fechaDesde}`,
+    `fecha_solicitud.lte.${fechaHasta}`,
+  ]
+  const createdDate = [
+    'fecha_servicio.is.null',
+    'fecha_solicitud.is.null',
+    `created_at.gte.${getLocalDateBoundaryIso(fechaDesde)}`,
+    `created_at.lt.${getLocalDateBoundaryIso(fechaHasta, 1)}`,
+  ]
+
+  return `and(${serviceDate.join(',')}),and(${requestDate.join(',')}),and(${createdDate.join(',')})`
 }
 
 function mergeServicioIntoList(
@@ -565,6 +652,119 @@ async function fetchServiciosChunkRows(
   }
 }
 
+export function useServiciosClienteReferencesQuery() {
+  return useQuery({
+    queryKey: serviciosSummaryKeys.clienteReferences(),
+    queryFn: async () => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) return []
+
+      return withOfflineFallback({
+        remote: () => fetchPaginatedRows<ServicioClienteReference>((from, to) => (
+          supabase
+            .from('servicios')
+            .select('cliente_id')
+            .order('id')
+            .range(from, to)
+        )),
+        local: async () => (await getCachedServiciosSnapshot(ownerId)).map((servicio) => ({
+          cliente_id: servicio.cliente_id,
+        })),
+      })
+    },
+    staleTime: 1000 * 60 * 60,
+  })
+}
+
+export function useServiciosCatalogMetadataQuery() {
+  return useQuery({
+    queryKey: serviciosSummaryKeys.catalogMetadata(),
+    queryFn: async () => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) return []
+
+      return withOfflineFallback({
+        remote: () => fetchPaginatedRows<ServicioCatalogMetadata>((from, to) => (
+          supabase
+            .from('servicios')
+            .select('tipo_servicio, clase_orden')
+            .order('id')
+            .range(from, to)
+        )),
+        local: async () => (await getCachedServiciosSnapshot(ownerId)).map((servicio) => ({
+          tipo_servicio: servicio.tipo_servicio,
+          clase_orden: servicio.clase_orden,
+        })),
+      })
+    },
+    staleTime: 1000 * 60 * 60 * 12,
+  })
+}
+
+export function useServiciosTechnicianActivityQuery(fechaDesde: string, fechaHasta: string) {
+  return useQuery({
+    queryKey: serviciosSummaryKeys.technicianActivity(fechaDesde, fechaHasta),
+    queryFn: async () => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) return []
+
+      return withOfflineFallback({
+        remote: () => fetchPaginatedRows<ServicioTechnicianActivity>((from, to) => (
+          supabase
+            .from('servicios')
+            .select('tecnico_id, created_at')
+            .gte('created_at', fechaDesde)
+            .lt('created_at', fechaHasta)
+            .order('created_at', { ascending: false })
+            .range(from, to)
+        )),
+        local: async () => (await getCachedServiciosSnapshot(ownerId))
+          .filter((servicio) => servicio.created_at >= fechaDesde && servicio.created_at < fechaHasta)
+          .map((servicio) => ({
+            tecnico_id: servicio.tecnico_id,
+            created_at: servicio.created_at,
+          })),
+      })
+    },
+    staleTime: 1000 * 60 * 15,
+  })
+}
+
+export function useServiciosMachineActivityQuery(fechaDesde: string, fechaHasta: string) {
+  return useQuery({
+    queryKey: serviciosSummaryKeys.machineActivity(fechaDesde, fechaHasta),
+    queryFn: async () => {
+      const ownerId = await getCurrentSessionUserId()
+      if (!ownerId) return []
+
+      return withOfflineFallback({
+        remote: () => fetchPaginatedRows<ServicioMachineActivity>((from, to) => (
+          supabase
+            .from('servicios')
+            .select('id, maquina_id, tecnico_id, status, fecha_servicio, fecha_solicitud, created_at, costo_refacciones, costo_mano_obra')
+            .or(buildServicioActivityDateFilter(fechaDesde, fechaHasta))
+            .order('created_at', { ascending: false })
+            .range(from, to)
+        )),
+        local: async () => (await getCachedServiciosSnapshot(ownerId))
+          .filter((servicio) => isDateWithinRange(getServicioActivityDate(servicio), fechaDesde, fechaHasta))
+          .map((servicio) => ({
+            id: servicio.id,
+            maquina_id: servicio.maquina_id,
+            tecnico_id: servicio.tecnico_id,
+            status: servicio.status,
+            fecha_servicio: servicio.fecha_servicio,
+            fecha_solicitud: servicio.fecha_solicitud,
+            created_at: servicio.created_at,
+            costo_refacciones: servicio.costo_refacciones,
+            costo_mano_obra: servicio.costo_mano_obra,
+          })),
+      })
+    },
+    staleTime: 1000 * 60 * 15,
+  })
+}
+
 export function useServiciosQuery(filtros?: FiltrosServicio, options?: ServiciosQueryOptions) {
   const normalizedFilters = normalizeServiciosListFilters(filtros) ?? undefined
 
@@ -588,6 +788,7 @@ export function useServiciosQuery(filtros?: FiltrosServicio, options?: Servicios
             if (normalizedFilters?.status) query = query.eq('status', normalizedFilters.status)
             if (normalizedFilters?.tecnicoId) query = query.eq('tecnico_id', normalizedFilters.tecnicoId)
             if (normalizedFilters?.clienteId) query = query.eq('cliente_id', normalizedFilters.clienteId)
+            if (normalizedFilters?.maquinaId) query = query.eq('maquina_id', normalizedFilters.maquinaId)
             if (normalizedFilters?.fechaDesde || normalizedFilters?.fechaHasta) {
               if (normalizedFilters.fechaCampo === 'solicitud') {
                 if (normalizedFilters.fechaDesde) query = query.gte('fecha_solicitud', normalizedFilters.fechaDesde)

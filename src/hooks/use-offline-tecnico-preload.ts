@@ -8,7 +8,7 @@ import {
 } from '@/lib/offline/tecnico-route-preload'
 import { preloadTecnicoOfflineData } from '@/lib/offline/tecnico-preload'
 import { hydrateTecnicoOfflineQueryCache } from '@/lib/offline/tecnico-query-hydration'
-import { hasTecnicoPreloadState } from '@/lib/offline/tecnico-preload-state'
+import { hasTecnicoPreloadState, readTecnicoPreloadState } from '@/lib/offline/tecnico-preload-state'
 import { formatLocalIsoDate } from '@/lib/utils'
 
 const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60
@@ -84,11 +84,12 @@ export function useOfflineTecnicoPreload() {
       setIsCodeReady(true)
     }
 
-    const hydrateQueries = async () => {
+    const hydrateQueries = async (updatedAt?: number) => {
       await ensureOfflineDbReady({ recover: true })
       await hydrateTecnicoOfflineQueryCache(tecnicoOwnerId, queryClient, {
         fecha,
         tecnicoId: tecnicoOwnerId,
+        updatedAt,
       })
       if (cancelled) return
       setReadyState({ ownerId: tecnicoOwnerId, value: true })
@@ -109,6 +110,7 @@ export function useOfflineTecnicoPreload() {
       }
 
       try {
+        const previousCompletedAt = readTecnicoPreloadState(tecnicoOwnerId)?.completedAt ?? 0
         await ensureOfflineDbReady({ recover: true })
         await Promise.all([
           ensureRouteModules(),
@@ -118,7 +120,8 @@ export function useOfflineTecnicoPreload() {
           }),
         ])
         if (cancelled) return
-        await hydrateQueries()
+        const completedAt = readTecnicoPreloadState(tecnicoOwnerId)?.completedAt ?? 0
+        await hydrateQueries(completedAt > previousCompletedAt ? completedAt : undefined)
       } catch {
         refreshReadyState()
       } finally {

@@ -42,7 +42,7 @@ import {
 import { supabase } from '@/lib/supabase'
 
 const PRELOAD_PAGE_SIZE = 250
-const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 60 * 4
+const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 60 * 12
 const ADMIN_BOOTSTRAP_LOOKBACK_DAYS = 7
 
 const SELECT_MAQUINA = '*, cliente:clientes(id, nombre, codigo_cliente, direccion, municipio, telefono)'

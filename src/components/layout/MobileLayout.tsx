@@ -98,7 +98,11 @@ export function MobileLayout() {
   }, {
     enabled: Boolean(user?.id) && warmupsEnabled && !isServiciosRoute,
   })
-  const { data: mantenimientos = [] } = useMantenimientosQuery()
+  const { data: mantenimientos = [] } = useMantenimientosQuery({
+    tecnicoId: user?.id ?? null,
+    statuses: ['pendiente', 'en_ruta'],
+    enabled: Boolean(user?.id),
+  })
 
   // Warmup offline para rutas críticas del técnico.
   useInventarioTecnicoQuery(today, user?.id, {

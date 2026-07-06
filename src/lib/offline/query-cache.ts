@@ -4,6 +4,7 @@ export function setOfflineHydratedQueryData<T>(
   queryClient: QueryClient,
   queryKey: QueryKey,
   data: T,
+  updatedAt = 0,
 ) {
-  queryClient.setQueryData(queryKey, data, { updatedAt: 0 })
+  queryClient.setQueryData(queryKey, data, { updatedAt })
 }

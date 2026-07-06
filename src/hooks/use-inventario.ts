@@ -292,8 +292,7 @@ export function useMovimientosQuery(inventarioId?: number) {
   return useQuery({
     queryKey: inventarioKeys.movimientos(inventarioId),
     networkMode: 'always',
-    staleTime: 0,
-    refetchOnMount: 'always',
+    staleTime: 1000 * 60 * 5,
     queryFn: async () => {
       const ownerId = await getCurrentSessionUserId()
       if (!ownerId) return []
@@ -597,7 +596,6 @@ export function useInventarioTecnicoQuery(
     enabled: options?.enabled ?? true,
     refetchInterval,
     refetchIntervalInBackground: false,
-    refetchOnMount: 'always',
     staleTime: 1000 * 60 * 3,
   })
 }

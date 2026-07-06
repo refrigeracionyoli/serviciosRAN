@@ -36,11 +36,49 @@ describe('egress reduction contracts', () => {
     const tecnicoPreload = read('src/lib/offline/tecnico-preload.ts')
     const tecnicoHook = read('src/hooks/use-offline-tecnico-preload.ts')
 
-    expect(adminPreload).toContain('const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 60 * 4')
+    expect(adminPreload).toContain('const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 60 * 12')
     expect(adminPreload).toContain('const ADMIN_BOOTSTRAP_LOOKBACK_DAYS = 7')
-    expect(adminHook).toContain('const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60 * 4')
+    expect(adminHook).toContain('const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60 * 12')
+    expect(adminHook).toContain('completedAt > previousCompletedAt ? completedAt : undefined')
     expect(tecnicoPreload).toContain('const PRELOAD_MIN_INTERVAL_MS = 1000 * 60 * 60')
     expect(tecnicoHook).toContain('const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60')
+    expect(tecnicoHook).toContain('completedAt > previousCompletedAt ? completedAt : undefined')
+  })
+
+  it('uses narrow service projections instead of downloading every full service row', () => {
+    const serviciosHook = read('src/hooks/use-servicios.ts')
+    const catalogosPage = read('src/pages/admin/catalogos/CatalogosPage.tsx')
+    const maquinasPage = read('src/pages/admin/catalogos/MaquinasPage.tsx')
+    const tecnicosPage = read('src/pages/admin/catalogos/TecnicosPage.tsx')
+    const servicioForm = read('src/components/forms/ServicioForm.tsx')
+
+    expect(serviciosHook).toContain(".select('cliente_id')")
+    expect(serviciosHook).toContain(".select('tipo_servicio, clase_orden')")
+    expect(serviciosHook).toContain(".select('tecnico_id, created_at')")
+    expect(serviciosHook).toContain('buildServicioActivityDateFilter(fechaDesde, fechaHasta)')
+    expect(catalogosPage).toContain('useServiciosClienteReferencesQuery()')
+    expect(maquinasPage).toContain('useServiciosMachineActivityQuery(')
+    expect(tecnicosPage).toContain('useServiciosTechnicianActivityQuery(')
+    expect(servicioForm).toContain('useServiciosCatalogMetadataQuery()')
+    expect(catalogosPage).not.toContain('useServiciosQuery()')
+    expect(maquinasPage).not.toContain('useServiciosQuery()')
+    expect(tecnicosPage).not.toContain('useServiciosQuery()')
+    expect(servicioForm).not.toContain('useServiciosQuery()')
+  })
+
+  it('filters maintenance traffic at Supabase and respects query freshness', () => {
+    const mantenimientosHook = read('src/hooks/use-mantenimientos.ts')
+    const tecnicoHome = read('src/pages/tecnico/TecnicoHomePage.tsx')
+    const mobileLayout = read('src/components/layout/MobileLayout.tsx')
+    const inventarioHook = read('src/hooks/use-inventario.ts')
+
+    expect(mantenimientosHook).toContain("query = query.eq('tecnico_id', filters.tecnicoId)")
+    expect(mantenimientosHook).toContain("query = query.eq('maquina_id', filters.maquinaId)")
+    expect(mantenimientosHook).toContain("query = query.in('status', filters.statuses)")
+    expect(mantenimientosHook).toContain('buildMantenimientoDateFilter(filters.fechaDesde, filters.fechaHasta)')
+    expect(tecnicoHome).toContain("statuses: ['en_ruta', 'realizado']")
+    expect(mobileLayout).toContain("statuses: ['pendiente', 'en_ruta']")
+    expect(inventarioHook).not.toContain("refetchOnMount: 'always'")
   })
 
   it('debounces realtime invalidations to avoid refetch storms from database triggers', () => {

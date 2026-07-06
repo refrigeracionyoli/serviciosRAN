@@ -28,7 +28,7 @@ import type { CrearPolizaInput, EditarPolizaInput } from '@/schemas/poliza.schem
 
 export const polizasKeys = {
   all: ['polizas'] as const,
-  list: () => ['polizas', 'list'] as const,
+  list: (maquinaId?: number | null) => ['polizas', 'list', maquinaId ?? null] as const,
   detail: (id: number) => ['polizas', 'detail', id] as const,
   history: (polizaId?: number) => ['polizas', 'history', polizaId] as const,
   pauses: () => ['polizas', 'pauses'] as const,
@@ -36,9 +36,16 @@ export const polizasKeys = {
 
 const SELECT_POLIZA = `*, cliente:clientes(*), maquina:maquinas(*)`
 
-export function usePolizasQuery() {
+interface PolizasQueryOptions {
+  maquinaId?: number | null
+  enabled?: boolean
+}
+
+export function usePolizasQuery(options?: PolizasQueryOptions) {
+  const maquinaId = options?.maquinaId ?? null
+
   return useQuery({
-    queryKey: polizasKeys.list(),
+    queryKey: polizasKeys.list(maquinaId),
     queryFn: async () => {
       const ownerId = await getCurrentSessionUserId()
       if (!ownerId) return []
@@ -48,22 +55,32 @@ export function usePolizasQuery() {
         ['poliza.create', 'poliza.update', 'poliza.set_active', 'poliza.delete'],
       )
       if (shouldUseLocalOnly) {
-        return getCachedPolizasSnapshot(ownerId)
+        const rows = await getCachedPolizasSnapshot(ownerId)
+        return maquinaId ? rows.filter((row) => row.maquina_id === maquinaId) : rows
       }
 
       return withOfflineFallback({
         remote: async () => {
-          const { data, error } = await supabase
+          let query = supabase
             .from('polizas')
             .select(SELECT_POLIZA)
             .order('created_at', { ascending: false })
+
+          if (maquinaId) query = query.eq('maquina_id', maquinaId)
+
+          const { data, error } = await query
           if (error) throw error
           await upsertCachedPolizas(ownerId, data as Poliza[])
-          return getCachedPolizasSnapshot(ownerId)
+          const rows = await getCachedPolizasSnapshot(ownerId)
+          return maquinaId ? rows.filter((row) => row.maquina_id === maquinaId) : rows
         },
-        local: () => getCachedPolizasSnapshot(ownerId),
+        local: async () => {
+          const rows = await getCachedPolizasSnapshot(ownerId)
+          return maquinaId ? rows.filter((row) => row.maquina_id === maquinaId) : rows
+        },
       })
     },
+    enabled: options?.enabled ?? true,
     staleTime: 1000 * 60 * 5,
   })
 }

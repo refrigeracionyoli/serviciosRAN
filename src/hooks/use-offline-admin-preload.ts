@@ -8,9 +8,9 @@ import {
 } from '@/lib/offline/admin-route-preload'
 import { preloadAdminOfflineData } from '@/lib/offline/preload'
 import { hydrateAdminOfflineQueryCache } from '@/lib/offline/query-hydration'
-import { hasAdminPreloadState } from '@/lib/offline/preload-state'
+import { hasAdminPreloadState, readAdminPreloadState } from '@/lib/offline/preload-state'
 
-const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60 * 4
+const PRELOAD_RETRY_INTERVAL_MS = 1000 * 60 * 60 * 12
 const PRELOAD_BOOTSTRAP_RETRY_INTERVAL_MS = 5000
 
 interface ReadyState {
@@ -81,8 +81,8 @@ export function useOfflineAdminPreload() {
       setIsCodeReady(true)
     }
 
-    const hydrateQueries = async () => {
-      await hydrateAdminOfflineQueryCache(adminOwnerId, queryClient)
+    const hydrateQueries = async (updatedAt?: number) => {
+      await hydrateAdminOfflineQueryCache(adminOwnerId, queryClient, { updatedAt })
       if (cancelled) return
       setReadyState({ ownerId: adminOwnerId, value: true })
       setIsBootstrapping(false)
@@ -117,12 +117,14 @@ export function useOfflineAdminPreload() {
       }
 
       try {
+        const previousCompletedAt = readAdminPreloadState(adminOwnerId)?.completedAt ?? 0
         await Promise.all([
           ensureRouteModules(),
           preloadAdminOfflineData(adminOwnerId, { force: options?.force }),
         ])
         if (cancelled) return
-        await hydrateQueries()
+        const completedAt = readAdminPreloadState(adminOwnerId)?.completedAt ?? 0
+        await hydrateQueries(completedAt > previousCompletedAt ? completedAt : undefined)
       } catch {
         refreshReadyState()
       } finally {

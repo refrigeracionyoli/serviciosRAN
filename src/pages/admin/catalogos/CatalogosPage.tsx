@@ -37,7 +37,7 @@ import {
 } from '@/hooks/use-clientes'
 import { useMaquinasQuery } from '@/hooks/use-maquinas'
 import { useEmpleadosQuery } from '@/hooks/use-tecnicos'
-import { useServiciosQuery } from '@/hooks/use-servicios'
+import { useServiciosClienteReferencesQuery } from '@/hooks/use-servicios'
 import { useToast } from '@/hooks/use-toast'
 import type { Cliente } from '@/types/domain.types'
 import { CatalogosSubNav } from './CatalogosSubNav'
@@ -61,7 +61,7 @@ export function CatalogosPage() {
   const { data: clientes = [], isLoading } = useClientesQuery({ includeInactive: true })
   const { data: maquinas = [], isLoading: loadingMaquinas } = useMaquinasQuery()
   const { data: empleados = [], isLoading: loadingEmpleados } = useEmpleadosQuery()
-  const { data: servicios = [], isLoading: loadingServicios } = useServiciosQuery()
+  const { data: servicios = [], isLoading: loadingServicios } = useServiciosClienteReferencesQuery()
   const { mutate: editarCliente, isPending: isUpdatingCliente } = useEditarClienteMutation()
   const { mutate: eliminarCliente, isPending: isDeletingCliente } = useEliminarClienteMutation()
   const isPageLoading = isLoading || loadingMaquinas || loadingEmpleados || loadingServicios

@@ -17,14 +17,24 @@ import {
   upsertCachedServicioRefacciones,
   upsertCachedMantenimientos,
 } from '@/lib/offline/cache'
-import type { InventarioTecnico, MantenimientoPoliza, RefaccionInventorySource, ServicioRefaccion } from '@/types/domain.types'
+import type {
+  FiltrosMantenimiento,
+  InventarioTecnico,
+  MantenimientoPoliza,
+  RefaccionInventorySource,
+  ServicioRefaccion,
+} from '@/types/domain.types'
 import type { CrearMantenimientoInput, EditarMantenimientoInput } from '@/schemas/mantenimiento.schema'
 import type { RefaccionInput } from '@/schemas/inventario.schema'
 import { inventarioKeys } from './use-inventario'
 
 export const mantenimientosKeys = {
   all: ['mantenimientos'] as const,
-  list: (polizaId?: number) => ['mantenimientos', 'list', polizaId] as const,
+  list: (input?: number | FiltrosMantenimiento) => [
+    'mantenimientos',
+    'list',
+    normalizeMantenimientosFilters(input),
+  ] as const,
   detail: (id: number) => ['mantenimientos', 'detail', id] as const,
   refacciones: (id: number) => ['mantenimiento-refacciones', id] as const,
 }
@@ -57,6 +67,45 @@ const UNRESOLVED_MANTENIMIENTO_COMMANDS = [
   'mantenimiento.replace_refacciones',
 ] as const
 
+interface MantenimientosQueryOptions extends FiltrosMantenimiento {
+  enabled?: boolean
+}
+
+function normalizeMantenimientosFilters(input?: number | FiltrosMantenimiento): Required<FiltrosMantenimiento> {
+  const filters = typeof input === 'number' ? { polizaId: input } : input
+  return {
+    polizaId: filters?.polizaId ?? null,
+    maquinaId: filters?.maquinaId ?? null,
+    tecnicoId: filters?.tecnicoId ?? null,
+    statuses: [...(filters?.statuses ?? [])].sort(),
+    fechaDesde: filters?.fechaDesde ?? null,
+    fechaHasta: filters?.fechaHasta ?? null,
+  }
+}
+
+function getLocalDateBoundaryIso(value: string, dayOffset = 0): string {
+  const [year, month, day] = value.split('-').map(Number)
+  return new Date(year, month - 1, day + dayOffset).toISOString()
+}
+
+function buildMantenimientoDateFilter(fechaDesde: string | null, fechaHasta: string | null): string | null {
+  if (!fechaDesde && !fechaHasta) return null
+
+  const visitDate: string[] = []
+  const createdDate = ['fecha_visita.is.null']
+
+  if (fechaDesde) {
+    visitDate.push(`fecha_visita.gte.${fechaDesde}`)
+    createdDate.push(`created_at.gte.${getLocalDateBoundaryIso(fechaDesde)}`)
+  }
+  if (fechaHasta) {
+    visitDate.push(`fecha_visita.lte.${fechaHasta}`)
+    createdDate.push(`created_at.lt.${getLocalDateBoundaryIso(fechaHasta, 1)}`)
+  }
+
+  return `and(${visitDate.join(',')}),and(${createdDate.join(',')})`
+}
+
 function toRefaccionInputs(rows: ServicioRefaccion[]): Array<RefaccionInput & { inventory_source?: RefaccionInventorySource }> {
   return rows.map((row) => ({
     inventario_id: row.inventario_id,
@@ -87,16 +136,19 @@ function buildInventarioQuantityMap(
   return quantities
 }
 
-export function useMantenimientosQuery(polizaId?: number) {
+export function useMantenimientosQuery(input?: number | MantenimientosQueryOptions) {
+  const filters = normalizeMantenimientosFilters(input)
+  const enabled = typeof input === 'number' ? true : input?.enabled ?? true
+
   return useQuery({
-    queryKey: mantenimientosKeys.list(polizaId),
+    queryKey: mantenimientosKeys.list(filters),
     queryFn: async () => {
       const ownerId = await getCurrentSessionUserId()
       if (!ownerId) return []
 
       const shouldUseLocalOnly = await hasBlockingRemoteFetchCommands(ownerId, [...UNRESOLVED_MANTENIMIENTO_COMMANDS])
       if (shouldUseLocalOnly) {
-        return getCachedMantenimientosSnapshot(ownerId, polizaId)
+        return getCachedMantenimientosSnapshot(ownerId, filters)
       }
 
       return withOfflineFallback({
@@ -106,16 +158,24 @@ export function useMantenimientosQuery(polizaId?: number) {
             .select(SELECT_MANTENIMIENTO)
             .order('fecha_visita', { ascending: false, nullsFirst: false })
 
-          if (polizaId) query = query.eq('poliza_id', polizaId)
+          if (filters.polizaId) query = query.eq('poliza_id', filters.polizaId)
+          if (filters.maquinaId) query = query.eq('maquina_id', filters.maquinaId)
+          if (filters.tecnicoId) query = query.eq('tecnico_id', filters.tecnicoId)
+          if (filters.statuses.length === 1) query = query.eq('status', filters.statuses[0])
+          if (filters.statuses.length > 1) query = query.in('status', filters.statuses)
+
+          const dateFilter = buildMantenimientoDateFilter(filters.fechaDesde, filters.fechaHasta)
+          if (dateFilter) query = query.or(dateFilter)
 
           const { data, error } = await query
           if (error) throw error
           await upsertCachedMantenimientos(ownerId, data as MantenimientoPoliza[])
-          return getCachedMantenimientosSnapshot(ownerId, polizaId)
+          return getCachedMantenimientosSnapshot(ownerId, filters)
         },
-        local: () => getCachedMantenimientosSnapshot(ownerId, polizaId),
+        local: () => getCachedMantenimientosSnapshot(ownerId, filters),
       })
     },
+    enabled,
     staleTime: 1000 * 60 * 5,
   })
 }

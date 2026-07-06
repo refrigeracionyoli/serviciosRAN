@@ -8,7 +8,7 @@ import { inventarioKeys } from '@/hooks/use-inventario'
 import { mantenimientosKeys } from '@/hooks/use-mantenimientos'
 import { maquinasTallerKeys } from '@/hooks/use-maquinas-taller'
 import { polizasKeys } from '@/hooks/use-polizas'
-import { serviciosKeys } from '@/hooks/use-servicios'
+import { serviciosKeys, serviciosSummaryKeys } from '@/hooks/use-servicios'
 
 const mocks = vi.hoisted(() => {
   const handlers = new Map<string, () => void>()
@@ -99,6 +99,7 @@ describe('useRealtimeInvalidations', () => {
     expect(invalidateSpy).not.toHaveBeenCalled()
     vi.advanceTimersByTime(5000)
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: serviciosKeys.all, refetchType: 'active' })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: serviciosSummaryKeys.all, refetchType: 'active' })
 
     mocks.handlers.get('evidencias')?.()
     vi.advanceTimersByTime(5000)
@@ -147,7 +148,8 @@ describe('useRealtimeInvalidations', () => {
     expect(invalidateSpy).not.toHaveBeenCalled()
 
     vi.advanceTimersByTime(1)
-    expect(invalidateSpy).toHaveBeenCalledTimes(1)
+    expect(invalidateSpy).toHaveBeenCalledTimes(2)
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: serviciosKeys.all, refetchType: 'active' })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: serviciosSummaryKeys.all, refetchType: 'active' })
   })
 })

@@ -21,7 +21,7 @@ import {
 } from '@/hooks/use-maquinas'
 import { useMaquinasEnTallerQuery } from '@/hooks/use-maquinas-taller'
 import { useClientesQuery, useCrearClienteMutation } from '@/hooks/use-clientes'
-import { useServiciosQuery } from '@/hooks/use-servicios'
+import { useServiciosCatalogMetadataQuery } from '@/hooks/use-servicios'
 import { formatMXN } from '@/lib/utils'
 import {
   Dialog,
@@ -394,7 +394,7 @@ export function ServicioForm({
   const { data: maquinas = [] } = useMaquinasQuery(clienteId)
   const { data: maquinasCatalogo = [] } = useMaquinasQuery()
   const { data: maquinasTallerAbiertas = [] } = useMaquinasEnTallerQuery({ soloAbiertas: true })
-  const { data: serviciosRegistrados = [] } = useServiciosQuery()
+  const { data: serviciosRegistrados = [] } = useServiciosCatalogMetadataQuery()
   const { mutateAsync: crearCliente, isPending: isCreatingCliente } = useCrearClienteMutation()
   const { mutateAsync: crearMaquina, isPending: isCreatingMaquina } = useCrearMaquinaMutation()
   const { mutateAsync: descartarMaquinaPendienteInstalacion } = useDescartarMaquinaPendienteInstalacionMutation()

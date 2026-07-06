@@ -92,9 +92,18 @@ export function MaquinaHistorialPage() {
   const [anioFilter, setAnioFilter] = useState<'all' | string>('all')
 
   const { data: maquinas = [], isLoading: loadingMaquinas } = useMaquinasQuery({ includeInactive: true })
-  const { data: serviciosData = [], isLoading: loadingServicios } = useServiciosQuery()
-  const { data: mantenimientosData = [], isLoading: loadingMantenimientos } = useMantenimientosQuery()
-  const { data: polizasData = [], isLoading: loadingPolizas } = usePolizasQuery()
+  const { data: serviciosData = [], isLoading: loadingServicios } = useServiciosQuery(
+    maquinaIdValido ? { maquinaId: maquinaIdValido } : undefined,
+    { enabled: Boolean(maquinaIdValido) },
+  )
+  const { data: mantenimientosData = [], isLoading: loadingMantenimientos } = useMantenimientosQuery({
+    maquinaId: maquinaIdValido,
+    enabled: Boolean(maquinaIdValido),
+  })
+  const { data: polizasData = [], isLoading: loadingPolizas } = usePolizasQuery({
+    maquinaId: maquinaIdValido,
+    enabled: Boolean(maquinaIdValido),
+  })
   const maquina = useMemo(
     () => maquinas.find((item) => item.id === maquinaIdValido) ?? null,
     [maquinaIdValido, maquinas],

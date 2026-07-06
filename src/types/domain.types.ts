@@ -299,9 +299,19 @@ export interface FiltrosServicio {
   status?: ServicioStatus | null
   tecnicoId?: string | null
   clienteId?: number | null
+  maquinaId?: number | null
   fechaDesde?: string | null
   fechaHasta?: string | null
   fechaCampo?: ServicioDateFilterField | null
   tipoServicio?: TipoServicio | null
   search?: string | null
+}
+
+export interface FiltrosMantenimiento {
+  polizaId?: number | null
+  maquinaId?: number | null
+  tecnicoId?: string | null
+  statuses?: MantenimientoStatus[]
+  fechaDesde?: string | null
+  fechaHasta?: string | null
 }

@@ -9,7 +9,7 @@ import { maquinasKeys } from '@/hooks/use-maquinas'
 import { maquinasTallerKeys } from '@/hooks/use-maquinas-taller'
 import { polizasKeys } from '@/hooks/use-polizas'
 import { useAuth } from '@/hooks/use-auth'
-import { serviciosKeys } from '@/hooks/use-servicios'
+import { serviciosKeys, serviciosSummaryKeys } from '@/hooks/use-servicios'
 import { tecnicosKeys } from '@/hooks/use-tecnicos'
 import { supabase } from '@/lib/supabase'
 
@@ -65,6 +65,7 @@ export function useRealtimeInvalidations() {
 
     const invalidateServicios = () => {
       invalidateActive(serviciosKeys.all)
+      invalidateActive(serviciosSummaryKeys.all)
     }
 
     const invalidateCatalogos = () => {
