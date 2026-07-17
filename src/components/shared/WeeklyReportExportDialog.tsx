@@ -127,8 +127,12 @@ export function WeeklyReportExportDialog({
     : detail
 
   return (
-    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && handleCancelClick()}>
-      <DialogContent className="overflow-hidden rounded-2xl border border-ran-ice bg-white p-0 shadow-[0_22px_60px_rgba(15,23,42,0.18)] sm:max-w-[460px] [&>button]:hidden">
+    <Dialog open={open}>
+      <DialogContent
+        className="overflow-hidden rounded-2xl border border-ran-ice bg-white p-0 shadow-[0_22px_60px_rgba(15,23,42,0.18)] sm:max-w-[460px] [&>button]:hidden"
+        onEscapeKeyDown={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <div className="relative">
           <button
             type="button"

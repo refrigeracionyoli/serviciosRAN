@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import { installSupabaseMock, type E2ERole } from './fixtures/supabase-mock'
 
@@ -124,6 +125,28 @@ test.describe('admin smoke screens', () => {
 
     await page.goto('/tecnico')
     await expect(page).toHaveURL(/\/$/)
+    expect(errors).toEqual([])
+  })
+
+  test('downloads the maintenance evidence ZIP completely', async ({ page }) => {
+    const errors = startErrorCapture(page)
+    await page.clock.setFixedTime(new Date('2026-04-26T12:00:00-06:00'))
+    await installSupabaseMock(page, { role: 'admin' })
+
+    await page.goto('/servicios')
+    await expect(page.getByRole('heading', { name: 'Servicios' })).toBeVisible()
+    await page.getByRole('button', { name: 'Exportar' }).click()
+    await page.getByRole('menuitem', { name: /Mantenimientos/ }).hover()
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('menuitem', { name: 'Solo evidencias' }).click()
+    const download = await downloadPromise
+    const downloadPath = await download.path()
+
+    expect(download.suggestedFilename()).toBe('S1726_Mantenimientos_SoloEvidencias_ReporteSemanal.zip')
+    expect(await download.failure()).toBeNull()
+    expect(downloadPath).not.toBeNull()
+    expect(fs.statSync(downloadPath!).size).toBeGreaterThan(1024)
     expect(errors).toEqual([])
   })
 })

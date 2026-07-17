@@ -1,12 +1,24 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import ExcelJS from 'exceljs'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import UZIP from 'uzip'
 import { buildCierresReportBuffer } from '@/lib/cierres-export'
-import { buildCierre, buildServicio } from '../fixtures/domain'
+import { buildWeeklyReportBundleFromBundles } from '@/lib/reportes-export'
+import { buildCierre, buildMaquina, buildServicio } from '../fixtures/domain'
 
 const root = process.cwd()
+
+function readBlobAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => reader.result instanceof ArrayBuffer
+      ? resolve(reader.result)
+      : reject(new Error('Generated file was not an ArrayBuffer.'))
+    reader.onerror = () => reject(reader.error ?? new Error('Generated file could not be read.'))
+    reader.readAsArrayBuffer(blob)
+  })
+}
 
 describe('report export contracts', () => {
   it('ships the Excel templates required by weekly and service evidence exports', () => {
@@ -20,6 +32,35 @@ describe('report export contracts', () => {
     }
   })
 
+  it('keeps report templates free of styled empty rows that exhaust browser memory', () => {
+    const compactSheets = [
+      {
+        template: 'public/report-templates/formato-evidencias-os.xlsx',
+        sheet: 'xl/worksheets/sheet1.xml',
+        dimension: '<dimension ref="A1:J64"/>',
+        firstExcludedRow: '<row r="65"',
+      },
+      {
+        template: 'public/report-templates/formato-semanal-2026.xlsx',
+        sheet: 'xl/worksheets/sheet3.xml',
+        dimension: '<dimension ref="A1:I2"/>',
+        firstExcludedRow: '<row r="3"',
+      },
+    ]
+
+    for (const contract of compactSheets) {
+      const xml = require('node:child_process')
+        .execFileSync('unzip', ['-p', contract.template, contract.sheet], {
+          cwd: root,
+          encoding: 'utf8',
+        })
+
+      expect(xml).toContain(contract.dimension)
+      expect(xml).not.toContain(contract.firstExcludedRow)
+      expect(Buffer.byteLength(xml)).toBeLessThan(1_000_000)
+    }
+  })
+
   it('keeps export code wired to Supabase, R2 evidence downloads, workers, and browser downloads', () => {
     const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
     const cierres = fs.readFileSync(path.join(root, 'src/lib/cierres-export.ts'), 'utf8')
@@ -29,6 +70,7 @@ describe('report export contracts', () => {
 
     expect(reportes).toContain('WEEKLY_TEMPLATE_URL')
     expect(reportes).toContain('EVIDENCE_TEMPLATE_URL')
+    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v2'")
     expect(reportes).toContain('downloadEvidenciaBlob')
     expect(reportes).toContain('originalBlobToEmbeddedImage')
     expect(reportes).toContain('resolveServiceCustomerCode')
@@ -42,6 +84,8 @@ describe('report export contracts', () => {
     expect(reportes).toContain("'Fecha Cierre', 'Fecha Servicio'")
     expect(reportes).toContain("'Fecha Servicio'")
     expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY')
+    expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY = 1')
+    expect(reportes).toContain('EVIDENCE_PHOTO_DOWNLOAD_CONCURRENCY = 2')
     expect(reportes).toContain('mapWithConcurrency(')
     expect(reportes).toContain('exportServiceEvidenceWorkbook')
     expect(reportes).toContain('exportWeeklyReportBundle')
@@ -55,6 +99,10 @@ describe('report export contracts', () => {
     expect(reportes).toContain('filterBundlesByWeeklyReportMode')
     expect(reportes).toContain("new Worker(new URL('./reportes-export.worker.ts', import.meta.url)")
     expect(reportes).toContain('downloadBlob')
+    expect(reportes).toContain('DOWNLOAD_URL_REVOKE_DELAY_MS = 60_000')
+    expect(reportes).not.toContain('URL.revokeObjectURL(fileUrl), 1_000')
+    expect(reportes).toContain('shouldIncludeWeeklyWorkbook ? loadTemplateArrayBuffer(WEEKLY_TEMPLATE_URL)')
+    expect(reportes).toContain('shouldIncludeEvidenceWorkbooks ? loadTemplateArrayBuffer(EVIDENCE_TEMPLATE_URL)')
     expect(cierres).toContain('exportCierresReport')
     expect(cierres).toContain('buildCierresReportBuffer')
     expect(cierres).toContain('buildCierresReportBlob')
@@ -85,6 +133,101 @@ describe('report export contracts', () => {
     expect(servicios).not.toContain('XLSX.writeFile')
     expect(dialog).toContain('WeeklyReportExportDialog')
     expect(dialog).toContain('onCancel')
+    expect(dialog).toContain('onInteractOutside={(event) => event.preventDefault()}')
+    expect(dialog).toContain('onEscapeKeyDown={(event) => event.preventDefault()}')
+    expect(dialog).not.toContain('onOpenChange=')
+  })
+
+  it('writes legacy installation labels as machine-ice services in the generated workbook', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+    const requestedUrls: string[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      requestedUrls.push(url)
+
+      if (url.endsWith('/report-templates/formato-semanal-2026.xlsx')) {
+        return new Response(weeklyTemplate, { status: 200 })
+      }
+
+      throw new Error(`Unexpected template request: ${url}`)
+    })
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'instalaciones_retiros',
+      contentMode: 'solo_reporte',
+    }, [{
+      servicio: buildServicio({
+        tipo_servicio: 'INSTALACION USADA',
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        maquina: buildMaquina({ modelo: 'MODELO SIN CLASIFICAR' }),
+      }),
+      cierre: buildCierre({ created_at: '2026-07-08T18:00:00.000Z' }),
+      refacciones: [],
+      evidencias: [],
+    }])
+
+    const reportBuffer = await readBlobAsArrayBuffer(result.blob)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(reportBuffer)
+
+    expect(workbook.getWorksheet('Registro Ordenes')?.getCell('E2').value)
+      .toBe('INSTALACION USADA - MAQUINA HIELO')
+    expect(workbook.getWorksheet('Registro Ordenes')?.getCell('K2').value)
+      .toBe('MAQUINA HIELO')
+    expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx'])
+  })
+
+  it('builds evidence-only ZIPs without loading or generating the weekly workbook', async () => {
+    const evidenceTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-evidencias-os.xlsx')),
+    )
+    const requestedUrls: string[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input)
+      requestedUrls.push(url)
+
+      if (url.endsWith('/report-templates/formato-evidencias-os.xlsx')) {
+        return new Response(evidenceTemplate, { status: 200 })
+      }
+
+      throw new Error(`Unexpected template request: ${url}`)
+    })
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'instalaciones_retiros',
+      contentMode: 'solo_evidencias',
+    }, [{
+      servicio: buildServicio({
+        tipo_servicio: 'INSTALACION USADA',
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+      }),
+      cierre: buildCierre({ created_at: '2026-07-08T18:00:00.000Z' }),
+      refacciones: [],
+      evidencias: [],
+    }])
+
+    const zipEntries = UZIP.parse(await readBlobAsArrayBuffer(result.blob))
+    const entryNames = Object.keys(zipEntries)
+
+    expect(entryNames).toEqual(['9001_INSTALACION USADA.xlsx'])
+    expect(entryNames.some((name) => name.includes('ReporteSemanal.xlsx'))).toBe(false)
+    expect(requestedUrls).toEqual(['/report-templates/formato-evidencias-os.xlsx'])
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(zipEntries[entryNames[0]])
+    expect(workbook.getWorksheet('Carátula')?.getCell('B7').value).toBe(9001)
   })
 
   it('keeps the weekly service date as a real Excel date and preserves valid formatting XML', () => {

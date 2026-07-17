@@ -229,6 +229,19 @@ const servicioCompletadoOtroDia = {
   cliente: clienteCompletadoOtroDia,
 }
 
+const servicioCerradoReporteSemanal = {
+  ...servicio,
+  id: 6,
+  orden: 1006,
+  aviso: 2006,
+  cliente_id: clienteCompletadoOtroDia.id,
+  descripcion: 'Servicio cerrado para reporte semanal',
+  status: 'cerrado',
+  fecha_servicio: '2026-04-25',
+  fecha_cierre: '2026-04-25',
+  cliente: clienteCompletadoOtroDia,
+}
+
 const cierre = {
   id: 1,
   servicio_id: servicio.id,
@@ -416,6 +429,7 @@ const tableRows: Record<string, Array<Record<string, unknown>>> = {
     servicioEnRutaOtroDia,
     servicioCompletadoHoy,
     servicioCompletadoOtroDia,
+    servicioCerradoReporteSemanal,
   ],
   cierres: [cierre],
   evidencias: [evidencia],

@@ -2,6 +2,11 @@ import UZIP from 'uzip'
 import type { Workbook, Worksheet } from 'exceljs'
 import { convertHeicBlobToJpeg } from '@/lib/image-compat'
 import { downloadEvidenciaBlob } from '@/lib/r2'
+import {
+  buildFallbackReportServiceType,
+  DEFAULT_REPORT_EQUIPMENT_TYPE,
+  normalizeReportServiceType,
+} from '@/lib/service-types'
 import { supabase } from '@/lib/supabase'
 import { isOrdenServicioFilename } from '@/lib/tecnico/servicio-evidencias'
 import type {
@@ -24,7 +29,7 @@ const NS = {
 
 const WEEKLY_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-semanal-2026.xlsx`
 const EVIDENCE_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-evidencias-os.xlsx`
-const TEMPLATE_CACHE_NAME = 'ran-report-templates-v1'
+const TEMPLATE_CACHE_NAME = 'ran-report-templates-v2'
 const TEMPLATE_FETCH_CACHE = new Map<string, Promise<ArrayBuffer>>()
 const XML_DECODER = new TextDecoder('utf-8')
 const XML_ENCODER = new TextEncoder()
@@ -32,7 +37,9 @@ const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.s
 const ZIP_MIME = 'application/zip'
 const REPORT_PROVIDER_DEFAULT = 4010269
 const REPORT_GZ_DEFAULT = 'NUEVO LEON'
-const WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY = 3
+const WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY = 1
+const EVIDENCE_PHOTO_DOWNLOAD_CONCURRENCY = 2
+const DOWNLOAD_URL_REVOKE_DELAY_MS = 60_000
 
 export type WeeklyReportExportMode =
   | 'todos'
@@ -294,6 +301,25 @@ function sanitizeFilenamePart(value: string | number | null | undefined): string
 
 function toUint8Array(buffer: ArrayBuffer | Uint8Array): Uint8Array {
   return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
+}
+
+async function readBlobArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer()
+  }
+
+  if (typeof FileReader === 'undefined') {
+    throw new Error('Este navegador no permite leer el archivo generado.')
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => reader.result instanceof ArrayBuffer
+      ? resolve(reader.result)
+      : reject(new Error('No se pudo leer el archivo generado.'))
+    reader.onerror = () => reject(reader.error ?? new Error('No se pudo leer el archivo generado.'))
+    reader.readAsArrayBuffer(blob)
+  })
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -1383,12 +1409,12 @@ function guessEquipmentType(servicio: Servicio): string {
   const candidates = [
     servicio.maquina?.modelo,
     servicio.descripcion,
-    servicio.tipo_servicio,
+    normalizeReportServiceType(servicio.tipo_servicio),
   ]
     .filter(Boolean)
     .map((value) => normalizeLookupKey(String(value)))
 
-  if (candidates.some((value) => value.includes('CUARTO FRIO') || value.includes('CUARTO FRIO'))) {
+  if (candidates.some((value) => value.includes('CUARTO FRIO'))) {
     return 'CUARTO FRIO'
   }
 
@@ -1397,14 +1423,10 @@ function guessEquipmentType(servicio: Servicio): string {
   }
 
   if (candidates.some((value) => value.includes('HIELO') || value.startsWith('KM'))) {
-    return 'MAQUINA HIELO'
+    return DEFAULT_REPORT_EQUIPMENT_TYPE
   }
 
-  if (candidates.some((value) => value.includes('ENFRIADOR') || value.startsWith('SD') || value.startsWith('MS'))) {
-    return 'ENFRIADOR'
-  }
-
-  return 'ENFRIADOR'
+  return DEFAULT_REPORT_EQUIPMENT_TYPE
 }
 
 function resolveReportServiceType(
@@ -1412,21 +1434,15 @@ function resolveReportServiceType(
   equipmentType: string,
   lookups: TemplateLookups,
 ): ServiceTypeLookupRecord {
+  const serviceType = normalizeReportServiceType(servicio.tipo_servicio)
   const exact = lookups.serviceTypeByBaseAndEquipment.get(
-    `${normalizeLookupKey(servicio.tipo_servicio)}|${normalizeLookupKey(equipmentType)}`,
+    `${normalizeLookupKey(serviceType)}|${normalizeLookupKey(equipmentType)}`,
   )
 
   if (exact) return exact
 
-  if (servicio.tipo_servicio.includes(' - ')) {
-    return {
-      reportType: servicio.tipo_servicio,
-      iniciativa: '',
-    }
-  }
-
   return {
-    reportType: `${servicio.tipo_servicio} - ${equipmentType}`,
+    reportType: buildFallbackReportServiceType(serviceType, equipmentType),
     iniciativa: '',
   }
 }
@@ -2112,7 +2128,7 @@ function buildWeeklyCombinedZipFilename(semana: string): string {
 
 function buildEvidenceWorkbookFilename(bundle: ServiceEvidenceExportBundle): string {
   const orden = bundle.servicio.orden != null ? sanitizeFilenamePart(bundle.servicio.orden) : `servicio-${bundle.servicio.id}`
-  const tipoServicio = sanitizeFilenamePart(bundle.servicio.tipo_servicio)
+  const tipoServicio = sanitizeFilenamePart(normalizeReportServiceType(bundle.servicio.tipo_servicio))
   return `${orden}_${tipoServicio}.xlsx`
 }
 
@@ -2121,8 +2137,11 @@ function downloadBlob(filename: string, blob: Blob) {
   const anchor = document.createElement('a')
   anchor.href = fileUrl
   anchor.download = filename
+  document.body.appendChild(anchor)
   anchor.click()
-  window.setTimeout(() => URL.revokeObjectURL(fileUrl), 1_000)
+  anchor.remove()
+  // Safari puede seguir leyendo el Blob después de iniciar una descarga grande.
+  window.setTimeout(() => URL.revokeObjectURL(fileUrl), DOWNLOAD_URL_REVOKE_DELAY_MS)
 }
 
 function toBlobBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -2168,7 +2187,7 @@ function getImageExportAttempts(profile: ImageExportProfile): Array<{ maxLongSid
 
 async function canvasBlobToEmbeddedImage(blob: Blob): Promise<EmbeddedImage> {
   return {
-    bytes: new Uint8Array(await blob.arrayBuffer()),
+    bytes: new Uint8Array(await readBlobArrayBuffer(blob)),
     extension: 'jpeg',
     mimeType: 'image/jpeg',
   }
@@ -2226,7 +2245,7 @@ async function originalBlobToEmbeddedImage(
     : extension === 'png' ? 'image/png' : 'image/gif'
 
   return {
-    bytes: new Uint8Array(await blob.arrayBuffer()),
+    bytes: new Uint8Array(await readBlobArrayBuffer(blob)),
     extension,
     mimeType,
   }
@@ -2477,7 +2496,7 @@ async function buildEvidenceAssets(
         message: 'No hay orden de servicio registrada para este servicio.',
       }
 
-  const photoAssets = await mapWithConcurrency(fotos, 4, signal, async (evidencia) => {
+  const photoAssets = await mapWithConcurrency(fotos, EVIDENCE_PHOTO_DOWNLOAD_CONCURRENCY, signal, async (evidencia) => {
     try {
       throwIfAborted(signal)
       return {
@@ -2797,25 +2816,29 @@ async function buildWeeklyReportEntriesFromBundles(
   bundles: ServiceEvidenceExportBundle[],
   options?: BuildWeeklyReportOptions,
 ): Promise<{ entries: Record<string, Uint8Array>; totalServicios: number }> {
+  if (bundles.length === 0) {
+    throw new Error('No hay servicios cerrados en la semana seleccionada para exportar.')
+  }
+
+  const contentMode = getWeeklyReportContentMode(input)
+  const shouldIncludeWeeklyWorkbook = contentMode !== 'solo_evidencias'
+  const shouldIncludeEvidenceWorkbooks = contentMode !== 'solo_reporte'
+
   emitWeeklyReportProgress(
     options,
     18,
     'Generando reporte semanal',
-    `${bundles.length} servicio(s) listos para exportación. Cargando plantillas base...`,
+    `${bundles.length} servicio(s) listos para exportación. Cargando archivos necesarios...`,
     0,
     bundles.length,
   )
   await yieldToBrowser(options?.signal)
 
   const [weeklyTemplateBuffer, evidenceTemplateBuffer] = await Promise.all([
-    loadTemplateArrayBuffer(WEEKLY_TEMPLATE_URL),
-    loadTemplateArrayBuffer(EVIDENCE_TEMPLATE_URL),
+    shouldIncludeWeeklyWorkbook ? loadTemplateArrayBuffer(WEEKLY_TEMPLATE_URL) : Promise.resolve(null),
+    shouldIncludeEvidenceWorkbooks ? loadTemplateArrayBuffer(EVIDENCE_TEMPLATE_URL) : Promise.resolve(null),
   ])
   throwIfAborted(options?.signal)
-
-  if (bundles.length === 0) {
-    throw new Error('No hay servicios cerrados en la semana seleccionada para exportar.')
-  }
 
   emitWeeklyReportProgress(
     options,
@@ -2827,47 +2850,47 @@ async function buildWeeklyReportEntriesFromBundles(
   )
   await yieldToBrowser(options?.signal)
 
-  const lookups = await loadTemplateLookups(weeklyTemplateBuffer)
-  throwIfAborted(options?.signal)
-  emitWeeklyReportProgress(
-    options,
-    28,
-    'Generando reporte semanal',
-    'Aplicando catálogo de tipos, PEP y resumen principal...',
-    0,
-    bundles.length,
-  )
-  await yieldToBrowser(options?.signal)
-
-  const normalizedServices = bundles.map((bundle) => normalizeReportService(bundle, lookups))
-  await yieldToBrowser(options?.signal)
-
-  const weeklyWorkbookBytes = await buildWeeklyWorkbookBytes(
-    weeklyTemplateBuffer,
-    normalizedServices,
-    input,
-    lookups,
-    options?.signal,
-  )
-  const weeklyWorkbookFilename = buildWeeklyWorkbookFilename(input)
-  emitWeeklyReportProgress(
-    options,
-    40,
-    'Generando reporte semanal',
-    'Concentrado semanal listo.',
-    0,
-    bundles.length,
-  )
-  await yieldToBrowser(options?.signal)
-
-  const workbookEntries: Record<string, Uint8Array> = {
-  }
-  const contentMode = getWeeklyReportContentMode(input)
-  const shouldIncludeWeeklyWorkbook = contentMode !== 'solo_evidencias'
-  const shouldIncludeEvidenceWorkbooks = contentMode !== 'solo_reporte'
+  const workbookEntries: Record<string, Uint8Array> = {}
 
   if (shouldIncludeWeeklyWorkbook) {
+    if (!weeklyTemplateBuffer) {
+      throw new Error('No se pudo cargar la plantilla del reporte semanal.')
+    }
+
+    const lookups = await loadTemplateLookups(weeklyTemplateBuffer)
+    throwIfAborted(options?.signal)
+    emitWeeklyReportProgress(
+      options,
+      28,
+      'Generando reporte semanal',
+      'Aplicando catálogo de tipos, PEP y resumen principal...',
+      0,
+      bundles.length,
+    )
+    await yieldToBrowser(options?.signal)
+
+    const normalizedServices = bundles.map((bundle) => normalizeReportService(bundle, lookups))
+    await yieldToBrowser(options?.signal)
+
+    const weeklyWorkbookBytes = await buildWeeklyWorkbookBytes(
+      weeklyTemplateBuffer,
+      normalizedServices,
+      input,
+      lookups,
+      options?.signal,
+    )
+    const weeklyWorkbookFilename = buildWeeklyWorkbookFilename(input)
     workbookEntries[weeklyWorkbookFilename] = weeklyWorkbookBytes
+
+    emitWeeklyReportProgress(
+      options,
+      40,
+      'Generando reporte semanal',
+      'Concentrado semanal listo.',
+      0,
+      bundles.length,
+    )
+    await yieldToBrowser(options?.signal)
   }
 
   if (!shouldIncludeEvidenceWorkbooks) {
@@ -2875,6 +2898,22 @@ async function buildWeeklyReportEntriesFromBundles(
       entries: workbookEntries,
       totalServicios: bundles.length,
     }
+  }
+
+  if (!evidenceTemplateBuffer) {
+    throw new Error('No se pudo cargar la plantilla de evidencias.')
+  }
+
+  if (!shouldIncludeWeeklyWorkbook) {
+    emitWeeklyReportProgress(
+      options,
+      40,
+      'Preparando evidencias',
+      'Plantilla de evidencias lista.',
+      0,
+      bundles.length,
+    )
+    await yieldToBrowser(options?.signal)
   }
 
   let completedEvidenceWorkbooks = 0
@@ -2899,7 +2938,7 @@ async function buildWeeklyReportEntriesFromBundles(
         signal: options?.signal,
         templateBuffer: evidenceTemplateBuffer,
       })
-      const bytes = toUint8Array(await serviceWorkbook.blob.arrayBuffer())
+      const bytes = toUint8Array(await readBlobArrayBuffer(serviceWorkbook.blob))
       completedEvidenceWorkbooks += 1
 
       emitWeeklyReportProgress(

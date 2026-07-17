@@ -2,8 +2,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  buildFallbackReportServiceType,
+  DEFAULT_REPORT_EQUIPMENT_TYPE,
   isInstallationServiceType,
   isRetiroServiceType,
+  normalizeReportServiceType,
   normalizeServiceType,
 } from '@/lib/service-types'
 
@@ -18,6 +21,16 @@ describe('workshop machine contracts', () => {
     expect(normalizeServiceType('Instalación - máquina hielo')).toContain('INSTALACION')
     expect(isInstallationServiceType('INSTALACIÓN - MAQUINA HIELO')).toBe(true)
     expect(isRetiroServiceType('retiro - maquina hielo')).toBe(true)
+  })
+
+  it('normalizes legacy cooler labels to the equipment used by RAN reports', () => {
+    expect(DEFAULT_REPORT_EQUIPMENT_TYPE).toBe('MAQUINA HIELO')
+    expect(normalizeReportServiceType('INSTALACION USADA - ENFRIADOR'))
+      .toBe('INSTALACION USADA - MAQUINA HIELO')
+    expect(normalizeReportServiceType('MTTO - enfriadores'))
+      .toBe('MTTO - MAQUINA HIELO')
+    expect(buildFallbackReportServiceType('INSTALACION USADA'))
+      .toBe('INSTALACION USADA - MAQUINA HIELO')
   })
 
   it('allows admins to remove open workshop records without deleting machines or services', () => {

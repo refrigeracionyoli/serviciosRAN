@@ -6,6 +6,23 @@ export function normalizeServiceType(value: string | null | undefined): string {
     .toUpperCase()
 }
 
+export const DEFAULT_REPORT_EQUIPMENT_TYPE = 'MAQUINA HIELO'
+
+export function normalizeReportServiceType(value: string | null | undefined): string {
+  return String(value ?? '')
+    .replace(/\bENFRIADOR(?:ES)?\b/gi, DEFAULT_REPORT_EQUIPMENT_TYPE)
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function buildFallbackReportServiceType(
+  value: string | null | undefined,
+  equipmentType = DEFAULT_REPORT_EQUIPMENT_TYPE,
+): string {
+  const serviceType = normalizeReportServiceType(value)
+  return serviceType.includes(' - ') ? serviceType : `${serviceType} - ${equipmentType}`
+}
+
 export function isInstallationServiceType(value: string | null | undefined): boolean {
   return normalizeServiceType(value).includes('INSTALACION')
 }
