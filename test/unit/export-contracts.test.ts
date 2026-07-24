@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import UZIP from 'uzip'
 import { buildCierresReportBuffer } from '@/lib/cierres-export'
 import { buildWeeklyReportBundleFromBundles } from '@/lib/reportes-export'
-import { buildCierre, buildMaquina, buildServicio } from '../fixtures/domain'
+import { buildCierre, buildMaquina, buildServicio, buildServicioRefaccion } from '../fixtures/domain'
 
 const root = process.cwd()
 
@@ -70,7 +70,7 @@ describe('report export contracts', () => {
 
     expect(reportes).toContain('WEEKLY_TEMPLATE_URL')
     expect(reportes).toContain('EVIDENCE_TEMPLATE_URL')
-    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v2'")
+    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v3'")
     expect(reportes).toContain('downloadEvidenciaBlob')
     expect(reportes).toContain('originalBlobToEmbeddedImage')
     expect(reportes).toContain('resolveServiceCustomerCode')
@@ -138,7 +138,7 @@ describe('report export contracts', () => {
     expect(dialog).not.toContain('onOpenChange=')
   })
 
-  it('writes legacy installation labels as machine-ice services in the generated workbook', async () => {
+  it('applies the current payment catalog without carrying external workbook links', async () => {
     const weeklyTemplate = new Uint8Array(
       fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
     )
@@ -159,28 +159,95 @@ describe('report export contracts', () => {
       semana: 'S2826',
       fechaInicio: '2026-07-06',
       fechaFin: '2026-07-11',
-      reportMode: 'instalaciones_retiros',
+      reportMode: 'todos',
       contentMode: 'solo_reporte',
-    }, [{
-      servicio: buildServicio({
-        tipo_servicio: 'INSTALACION USADA',
-        status: 'completado',
-        fecha_cierre: '2026-07-08',
-        maquina: buildMaquina({ modelo: 'MODELO SIN CLASIFICAR' }),
-      }),
-      cierre: buildCierre({ created_at: '2026-07-08T18:00:00.000Z' }),
-      refacciones: [],
-      evidencias: [],
-    }])
+    }, [
+      {
+        servicio: buildServicio({
+          tipo_servicio: 'INSTALACION USADA',
+          status: 'completado',
+          fecha_cierre: '2026-07-08',
+          maquina: buildMaquina({ modelo: 'MODELO SIN CLASIFICAR' }),
+        }),
+        cierre: buildCierre({ created_at: '2026-07-08T18:00:00.000Z' }),
+        refacciones: [buildServicioRefaccion({
+          nombre_refaccion: 'Filtro de prueba',
+          cantidad: 2,
+          precio_unitario: 125,
+          subtotal: 250,
+        })],
+        evidencias: [],
+      },
+      {
+        servicio: buildServicio({
+          id: 31,
+          orden: 9002,
+          aviso: 7002,
+          tipo_servicio: 'INST MH SIX BASE',
+          status: 'completado',
+          fecha_cierre: '2026-07-08',
+          maquina: buildMaquina({ modelo: 'MAQUINA HIELO SIX BASE' }),
+        }),
+        cierre: buildCierre({
+          id: 111,
+          servicio_id: 31,
+          aviso: 7002,
+          created_at: '2026-07-08T18:00:00.000Z',
+        }),
+        refacciones: [],
+        evidencias: [],
+      },
+    ])
 
     const reportBuffer = await readBlobAsArrayBuffer(result.blob)
+    const reportEntries = UZIP.parse(reportBuffer)
+    const workbookXml = new TextDecoder().decode(reportEntries['xl/workbook.xml'])
+    const ordersXml = new TextDecoder().decode(reportEntries['xl/worksheets/sheet2.xml'])
+    const sparePartsXml = new TextDecoder().decode(reportEntries['xl/worksheets/sheet3.xml'])
+    const catPepXml = new TextDecoder().decode(reportEntries['xl/worksheets/sheet6.xml'])
+    const catPepTableXml = new TextDecoder().decode(reportEntries['xl/tables/table7.xml'])
+
+    expect(Object.keys(reportEntries).some((name) => name.startsWith('xl/externalLinks/'))).toBe(false)
+    expect(workbookXml).not.toContain('externalReference')
+    expect(catPepXml).not.toContain('[1]BASE TRADE')
+    expect(catPepTableXml).not.toContain('[1]BASE TRADE')
+    expect(catPepTableXml).toContain('name="REGION"')
+    expect(ordersXml).toContain('Caratula!$D$17')
+    expect(ordersXml).toContain('<v>S2826</v>')
+    expect(sparePartsXml).toContain('<v>NUEVO LEON</v>')
+
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.load(reportBuffer)
+    const orders = workbook.getWorksheet('Registro Ordenes')
+    const spareParts = workbook.getWorksheet('Registro Refacciones')
 
-    expect(workbook.getWorksheet('Registro Ordenes')?.getCell('E2').value)
+    expect(orders?.getCell('A2').value).toMatchObject({ result: 4010269 })
+    expect(orders?.getCell('B2').value).toMatchObject({ result: 'NUEVO LEON' })
+    expect(orders?.getCell('C2').value).toMatchObject({ result: 'S2826' })
+    expect(orders?.getCell('E2').value)
       .toBe('INSTALACION USADA - MAQUINA HIELO')
-    expect(workbook.getWorksheet('Registro Ordenes')?.getCell('K2').value)
+    expect(orders?.getCell('K2').value)
       .toBe('MAQUINA HIELO')
+    expect(orders?.getCell('O2').value).toMatchObject({ result: 250 })
+    expect(orders?.getCell('P2').value).toMatchObject({ result: 250 })
+    expect(orders?.getCell('E3').value)
+      .toBe('INST MH SIX BASE - MAQUINA HIELO')
+    expect(spareParts?.getCell('B2').value).toBe(9001)
+    expect(spareParts?.getCell('C2').value).toBe('REFACCIONES - MAQUINA HIELO')
+    expect(spareParts?.getCell('F2').value).toBe('Filtro de prueba')
+    expect(spareParts?.getCell('G2').value).toBe(2)
+    expect(spareParts?.getCell('H2').value).toBe(125)
+    expect(spareParts?.getCell('I2').value).toMatchObject({ result: 250 })
+    expect(workbook.getWorksheet('CatPEP')?.rowCount).toBe(776)
+
+    const paymentSummary = workbook.getWorksheet('Resumen para pago')
+    const sixBaseRow = paymentSummary
+      ? Array.from({ length: paymentSummary.rowCount }, (_, index) => paymentSummary.getRow(index + 1))
+        .find((row) => row.getCell(4).value === 'INST MH SIX BASE - MAQUINA HIELO')
+      : undefined
+
+    expect(sixBaseRow?.getCell(5).value).toBe('M/MXCM/26/CAF1/C2/515/01')
+    expect(sixBaseRow?.getCell(6).value).toBe('DESARROLLO FRIO')
     expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx'])
   })
 

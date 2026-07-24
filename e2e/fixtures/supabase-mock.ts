@@ -322,6 +322,12 @@ const mantenimientoRefaccion = {
   mantenimiento_id: mantenimiento.id,
 }
 
+const reporteSemanalRefaccion = {
+  ...servicioRefaccion,
+  id: 3,
+  servicio_id: servicioCerradoReporteSemanal.id,
+}
+
 const inventarioTecnico = {
   id: 1,
   tecnico_id: TECNICO_ID,
@@ -440,7 +446,7 @@ const tableRows: Record<string, Array<Record<string, unknown>>> = {
   poliza_estado_historial: [polizaHistorial],
   poliza_pausas: [polizaPausa],
   mantenimientos_poliza: [mantenimiento],
-  servicio_refacciones: [servicioRefaccion, mantenimientoRefaccion],
+  servicio_refacciones: [servicioRefaccion, mantenimientoRefaccion, reporteSemanalRefaccion],
   maquinas_en_taller: [maquinaTaller],
   maquinas_taller_movimientos: [maquinaTallerMovimiento],
   catalogo_pep: [catalogoPep],

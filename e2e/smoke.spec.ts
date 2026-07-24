@@ -1,5 +1,7 @@
 import fs from 'node:fs'
+import ExcelJS from 'exceljs'
 import { expect, test, type Page } from '@playwright/test'
+import UZIP from 'uzip'
 import { installSupabaseMock, type E2ERole } from './fixtures/supabase-mock'
 
 interface SmokeRoute {
@@ -147,6 +149,44 @@ test.describe('admin smoke screens', () => {
     expect(await download.failure()).toBeNull()
     expect(downloadPath).not.toBeNull()
     expect(fs.statSync(downloadPath!).size).toBeGreaterThan(1024)
+    expect(errors).toEqual([])
+  })
+
+  test('downloads a repair-safe weekly workbook with spare parts', async ({ page }) => {
+    const errors = startErrorCapture(page)
+    await page.clock.setFixedTime(new Date('2026-04-26T12:00:00-06:00'))
+    await installSupabaseMock(page, { role: 'admin' })
+
+    await page.goto('/servicios')
+    await expect(page.getByRole('heading', { name: 'Servicios' })).toBeVisible()
+    await page.getByRole('button', { name: 'Exportar' }).click()
+    await page.getByRole('menuitem', { name: /Mantenimientos/ }).hover()
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('menuitem', { name: 'Solo reporte semanal' }).click()
+    const download = await downloadPromise
+    const downloadPath = await download.path()
+
+    expect(download.suggestedFilename()).toBe('S1726_Mantenimientos_ReporteSemanal.xlsx')
+    expect(await download.failure()).toBeNull()
+    expect(downloadPath).not.toBeNull()
+
+    const bytes = fs.readFileSync(downloadPath!)
+    const entries = UZIP.parse(bytes)
+    const textDecoder = new TextDecoder()
+
+    expect(Object.keys(entries).some((name) => name.startsWith('xl/externalLinks/'))).toBe(false)
+    expect(textDecoder.decode(entries['xl/tables/table7.xml'])).not.toContain('[1]BASE TRADE')
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(bytes)
+    const spareParts = workbook.getWorksheet('Registro Refacciones')
+
+    expect(spareParts?.getCell('B2').value).toBe(1006)
+    expect(spareParts?.getCell('F2').value).toBe('Filtro de agua')
+    expect(spareParts?.getCell('G2').value).toBe(1)
+    expect(spareParts?.getCell('H2').value).toBe(350)
+    expect(spareParts?.getCell('I2').value).toMatchObject({ result: 350 })
     expect(errors).toEqual([])
   })
 })

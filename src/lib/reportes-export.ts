@@ -29,7 +29,7 @@ const NS = {
 
 const WEEKLY_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-semanal-2026.xlsx`
 const EVIDENCE_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-evidencias-os.xlsx`
-const TEMPLATE_CACHE_NAME = 'ran-report-templates-v2'
+const TEMPLATE_CACHE_NAME = 'ran-report-templates-v3'
 const TEMPLATE_FETCH_CACHE = new Map<string, Promise<ArrayBuffer>>()
 const XML_DECODER = new TextDecoder('utf-8')
 const XML_ENCODER = new TextEncoder()
@@ -570,6 +570,101 @@ function removeCalcChain(files: Record<string, Uint8Array>) {
   files['xl/_rels/workbook.xml.rels'] = serializeXml(workbookRelsDoc)
 }
 
+function hasExternalWorkbookReference(formula: string): boolean {
+  // Exclude table structured references such as Table1[[#This Row],[Column]].
+  return /\[[^[\]]+\][^![\]]*!/.test(formula)
+}
+
+function freezeExternalFormulaResults(files: Record<string, Uint8Array>) {
+  for (const sheetPath of Object.keys(files).filter((filePath) => /^xl\/worksheets\/sheet\d+\.xml$/.test(filePath))) {
+    const sheetDoc = parseXml(files[sheetPath])
+    let changed = false
+
+    for (const cell of getElementsByLocalName(sheetDoc, 'c')) {
+      const formula = getDirectChildElementByLocalName(cell, 'f')
+      if (!formula?.textContent || !hasExternalWorkbookReference(formula.textContent)) {
+        continue
+      }
+
+      const cachedValue = getDirectChildElementByLocalName(cell, 'v')
+      const value = cachedValue?.textContent ?? ''
+      formula.remove()
+      cachedValue?.remove()
+
+      cell.setAttribute('t', 'inlineStr')
+      const inlineString = sheetDoc.createElementNS(NS.spreadsheet, 'is')
+      const text = sheetDoc.createElementNS(NS.spreadsheet, 't')
+      if (/^\s|\s$/.test(value)) {
+        text.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve')
+      }
+      text.textContent = value
+      inlineString.appendChild(text)
+      cell.appendChild(inlineString)
+      changed = true
+    }
+
+    if (changed) {
+      files[sheetPath] = serializeXml(sheetDoc)
+    }
+  }
+
+  for (const tablePath of Object.keys(files).filter((filePath) => /^xl\/tables\/table\d+\.xml$/.test(filePath))) {
+    const tableDoc = parseXml(files[tablePath])
+    let changed = false
+
+    for (const formula of [
+      ...getElementsByLocalName(tableDoc, 'calculatedColumnFormula'),
+      ...getElementsByLocalName(tableDoc, 'totalsRowFormula'),
+    ]) {
+      if (!formula.textContent || !hasExternalWorkbookReference(formula.textContent)) {
+        continue
+      }
+
+      formula.remove()
+      changed = true
+    }
+
+    if (changed) {
+      files[tablePath] = serializeXml(tableDoc)
+    }
+  }
+}
+
+function removeExternalLinkArtifacts(files: Record<string, Uint8Array>) {
+  freezeExternalFormulaResults(files)
+
+  for (const filePath of Object.keys(files)) {
+    if (filePath.startsWith('xl/externalLinks/')) {
+      delete files[filePath]
+    }
+  }
+
+  const contentTypesDoc = parseXml(files['[Content_Types].xml'])
+  const contentTypesRoot = getRootElement(contentTypesDoc)
+  for (const override of getDirectChildElementsByLocalName(contentTypesRoot, 'Override')) {
+    if ((override.getAttribute('PartName') ?? '').startsWith('/xl/externalLinks/')) {
+      override.remove()
+    }
+  }
+  files['[Content_Types].xml'] = serializeXml(contentTypesDoc)
+
+  const workbookDoc = parseXml(files['xl/workbook.xml'])
+  const workbookRoot = getRootElement(workbookDoc)
+  getDirectChildElementByLocalName(workbookRoot, 'externalReferences')?.remove()
+  files['xl/workbook.xml'] = serializeXml(workbookDoc)
+
+  const workbookRelsDoc = parseXml(files['xl/_rels/workbook.xml.rels'])
+  const workbookRelsRoot = getRootElement(workbookRelsDoc)
+  for (const relationship of getDirectChildElementsByLocalName(workbookRelsRoot, 'Relationship')) {
+    const target = relationship.getAttribute('Target') ?? ''
+    const type = relationship.getAttribute('Type') ?? ''
+    if (target.startsWith('externalLinks/') || type.endsWith('/externalLink')) {
+      relationship.remove()
+    }
+  }
+  files['xl/_rels/workbook.xml.rels'] = serializeXml(workbookRelsDoc)
+}
+
 function removeProtectionArtifacts(files: Record<string, Uint8Array>) {
   if (files['xl/workbook.xml']) {
     const workbookDoc = parseXml(files['xl/workbook.xml'])
@@ -865,6 +960,56 @@ function setNumber(
   const v = document.createElementNS(NS.spreadsheet, 'v')
   v.textContent = String(value)
   cell.appendChild(v)
+}
+
+function setFormulaCachedString(
+  document: XMLDocument,
+  row: Element,
+  column: string,
+  value: string | null | undefined,
+) {
+  const cell = ensureCell(document, row, column)
+  const formula = getDirectChildElementByLocalName(cell, 'f')
+  if (!formula) {
+    setInlineString(document, row, column, value)
+    return
+  }
+
+  for (const child of [...Array.from(cell.children)]) {
+    if (child !== formula) {
+      child.remove()
+    }
+  }
+
+  cell.setAttribute('t', 'str')
+  const cachedValue = document.createElementNS(NS.spreadsheet, 'v')
+  cachedValue.textContent = value ?? ''
+  cell.appendChild(cachedValue)
+}
+
+function setFormulaCachedNumber(
+  document: XMLDocument,
+  row: Element,
+  column: string,
+  value: number,
+) {
+  const cell = ensureCell(document, row, column)
+  const formula = getDirectChildElementByLocalName(cell, 'f')
+  if (!formula) {
+    setNumber(document, row, column, value)
+    return
+  }
+
+  for (const child of [...Array.from(cell.children)]) {
+    if (child !== formula) {
+      child.remove()
+    }
+  }
+
+  cell.removeAttribute('t')
+  const cachedValue = document.createElementNS(NS.spreadsheet, 'v')
+  cachedValue.textContent = String(value)
+  cell.appendChild(cachedValue)
 }
 
 function getRowTemplate(sheetData: Element, rowNumber: number): Element {
@@ -1792,6 +1937,7 @@ function fillWeeklyCaratula(
 function fillWeeklyRegistroOrdenes(
   files: Record<string, Uint8Array>,
   normalizedServices: NormalizedReportService[],
+  semana: string,
 ) {
   const sheetPath = 'xl/worksheets/sheet2.xml'
   const document = getWorksheetDocument(files, sheetPath)
@@ -1813,7 +1959,13 @@ function fillWeeklyRegistroOrdenes(
       const data = normalizedServices[index]
 
       if (!data) {
+        setFormulaCachedString(document, row, 'A', '')
+        setFormulaCachedString(document, row, 'B', '')
+        setFormulaCachedString(document, row, 'C', '')
+        setFormulaCachedString(document, row, 'D', '')
         setInlineString(document, row, 'E', '')
+        setFormulaCachedString(document, row, 'F', '')
+        setFormulaCachedString(document, row, 'G', '')
         setNumber(document, row, 'H', null)
         setNumber(document, row, 'I', null)
         setInlineString(document, row, 'J', '')
@@ -1821,11 +1973,19 @@ function fillWeeklyRegistroOrdenes(
         setInlineString(document, row, 'L', '')
         setNumber(document, row, 'M', null, dateStyleId)
         setNumber(document, row, 'N', null)
+        setFormulaCachedNumber(document, row, 'O', 0)
+        setFormulaCachedNumber(document, row, 'P', 0)
         setInlineString(document, row, 'Q', '')
         return
       }
 
+      setFormulaCachedNumber(document, row, 'A', data.provider)
+      setFormulaCachedString(document, row, 'B', data.gz)
+      setFormulaCachedString(document, row, 'C', semana)
+      setFormulaCachedString(document, row, 'D', data.gz)
       setInlineString(document, row, 'E', data.reportServiceType)
+      setFormulaCachedString(document, row, 'F', data.pep)
+      setFormulaCachedString(document, row, 'G', data.pepNombre)
       setNumber(document, row, 'H', data.cierre?.aviso ?? data.servicio.aviso ?? null)
       setNumber(document, row, 'I', data.servicio.orden ?? null)
       setInlineString(document, row, 'J', resolveServiceCustomerCode(data.servicio))
@@ -1833,6 +1993,8 @@ function fillWeeklyRegistroOrdenes(
       setInlineString(document, row, 'L', data.servicio.maquina?.serie ?? '')
       setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)
       setNumber(document, row, 'N', data.costoServicio)
+      setFormulaCachedNumber(document, row, 'O', data.costoRefacciones)
+      setFormulaCachedNumber(document, row, 'P', data.costoServicio + data.costoRefacciones)
       setInlineString(document, row, 'Q', data.comentario)
     },
   )
@@ -1868,19 +2030,32 @@ function fillWeeklyRegistroRefacciones(
       const data = rowsData[index]
 
       if (!data) {
+        setFormulaCachedString(document, row, 'A', '')
         setNumber(document, row, 'B', null)
         setInlineString(document, row, 'C', '')
+        setFormulaCachedString(document, row, 'D', '')
+        setFormulaCachedString(document, row, 'E', '')
         setInlineString(document, row, 'F', '')
         setNumber(document, row, 'G', null)
         setNumber(document, row, 'H', null)
+        setFormulaCachedNumber(document, row, 'I', 0)
         return
       }
 
+      setFormulaCachedString(document, row, 'A', data.service.gz)
       setNumber(document, row, 'B', data.service.servicio.orden ?? null)
       setInlineString(document, row, 'C', data.service.refaccionesReportType)
+      setFormulaCachedString(document, row, 'D', data.service.refaccionesPep)
+      setFormulaCachedString(document, row, 'E', data.service.refaccionesPepNombre)
       setInlineString(document, row, 'F', data.row.nombre_refaccion)
       setNumber(document, row, 'G', data.row.cantidad)
       setNumber(document, row, 'H', data.row.precio_unitario)
+      setFormulaCachedNumber(
+        document,
+        row,
+        'I',
+        Number(data.row.subtotal) || (data.row.cantidad * data.row.precio_unitario),
+      )
     },
   )
 
@@ -2091,13 +2266,14 @@ async function buildWeeklyWorkbookBytes(
   const summaryRows = buildWeeklySummaryRows(normalizedServices, input.semana)
 
   removeCalcChain(files)
+  removeExternalLinkArtifacts(files)
   removeProtectionArtifacts(files)
   setCalcPrForFullRecalc(files)
   await yieldToBrowser(signal)
 
   fillWeeklyCaratula(files, normalizedServices, input.semana, input.fechaInicio, input.fechaFin, lookups)
   await yieldToBrowser(signal)
-  fillWeeklyRegistroOrdenes(files, normalizedServices)
+  fillWeeklyRegistroOrdenes(files, normalizedServices, input.semana)
   await yieldToBrowser(signal)
   fillWeeklyRegistroRefacciones(files, normalizedServices)
   await yieldToBrowser(signal)
