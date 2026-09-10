@@ -365,6 +365,61 @@ describe('report export contracts', () => {
     expect(pepFor('FLETES-TALLER - MOVIMIENTOS')).toBe('M/MXCM/26/CG7L/C2/815/01')
   }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
+  it('expands legacy service types stored without an equipment suffix', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // Buena parte del histórico se capturó sin el sufijo de equipo ("INSTALACION" en vez
+    // de "INSTALACION - MAQUINA HIELO"). Esos registros se resuelven por la hoja Sheet2 de
+    // la plantilla, un camino distinto al de los nombres completos, y dependen de que
+    // exceljs pueda leer el valor en caché de una fórmula. Si Sheet2 dejara de traer ese
+    // valor, estos servicios saldrían sin código PEP y sin fallar de forma visible.
+    const legacyTypes: Array<[string, string, string]> = [
+      ['INSTALACION', 'INSTALACION - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/01'],
+      ['RETIRO', 'RETIRO - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/01'],
+    ]
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, legacyTypes.map(([tipoServicio], index) => ({
+      servicio: buildServicio({
+        id: 60 + index,
+        orden: 9400 + index,
+        aviso: 7400 + index,
+        tipo_servicio: tipoServicio,
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 140 + index, servicio_id: 60 + index, aviso: 7400 + index }),
+      refacciones: [],
+      evidencias: [],
+    })))
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await readBlobAsArrayBuffer(result.blob))
+    const orders = workbook.getWorksheet('Registro Ordenes')
+    const paymentSummary = workbook.getWorksheet('Resumen para pago')
+    const summaryRows = paymentSummary
+      ? Array.from({ length: paymentSummary.rowCount }, (_, index) => paymentSummary.getRow(index + 1))
+      : []
+
+    legacyTypes.forEach(([, expandedType, pep], index) => {
+      expect(orders?.getCell(`E${index + 2}`).value).toBe(expandedType)
+      expect(summaryRows.find((row) => row.getCell(4).value === expandedType)?.getCell(5).value)
+        .toBe(pep)
+    })
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
   it('keeps the PEP of every pre-2026 concept unchanged after the catalog update', async () => {
     const weeklyTemplate = new Uint8Array(
       fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
