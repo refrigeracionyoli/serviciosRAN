@@ -9,6 +9,12 @@ import { buildCierre, buildMaquina, buildServicio, buildServicioRefaccion } from
 
 const root = process.cwd()
 
+// Estas pruebas descomprimen y reescriben la plantilla semanal completa (917 conceptos en
+// CatPEP). Tardan bastante más que el límite de 5 s de vitest, y en CI corren además con
+// instrumentación de cobertura, así que llevan su propio límite en vez de aflojar el
+// global —que ocultaría cuelgues reales en el resto de la suite—.
+const HEAVY_WORKBOOK_TIMEOUT_MS = 60_000
+
 function readBlobAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -270,7 +276,7 @@ describe('report export contracts', () => {
     expect(sixBaseRow?.getCell(5).value).toBe('M/MXCM/26/CAF1/C2/515/01')
     expect(sixBaseRow?.getCell(6).value).toBe('DESARROLLO FRIO')
     expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx?v=ran-report-templates-v4'])
-  })
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
   it('resolves the 2026 freight concepts to a PEP using the catalog spelling', async () => {
     const weeklyTemplate = new Uint8Array(
@@ -357,7 +363,7 @@ describe('report export contracts', () => {
     expect(pepFor('FLETE MOV GZ  A GZ - MAQUINA HIELO')).toBe('M/MXCM/26/GA6B/C6/815/03')
     expect(pepFor('FLETE MOV CEDIS A CEDIS - MAQUINA HIELO')).toBe('M/MXCM/26/GA6B/C6/815/03')
     expect(pepFor('FLETES-TALLER - MOVIMIENTOS')).toBe('M/MXCM/26/CG7L/C2/815/01')
-  })
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
   it('keeps the PEP of every pre-2026 concept unchanged after the catalog update', async () => {
     const weeklyTemplate = new Uint8Array(
@@ -415,7 +421,7 @@ describe('report export contracts', () => {
       expect(summaryRow?.getCell(5).value).toBe(pep)
       expect(summaryRow?.getCell(6).value).toBe(nombrePep)
     })
-  })
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
   it('builds evidence-only ZIPs without loading or generating the weekly workbook', async () => {
     const evidenceTemplate = new Uint8Array(

@@ -52,6 +52,15 @@ function requireEnv(...names) {
   process.exit(1)
 }
 
+// PostgREST responde PGRST205 cuando la tabla no existe en el esquema. No es un fallo del
+// respaldo: hay tablas declaradas en las migraciones que nunca se crearon en producción
+// (catalogo_pep, por ejemplo, quedó sin usarse porque el PEP se resuelve desde la
+// plantilla de Excel). Se distingue de un error real para no dar por bueno un respaldo
+// incompleto ni bloquearlo por una tabla que no existe.
+const MISSING_TABLE_CODE = 'PGRST205'
+
+class MissingTableError extends Error {}
+
 async function fetchPage(baseUrl, serviceKey, table, from, to) {
   const url = `${baseUrl}/rest/v1/${table}?select=*&order=id.asc`
   const response = await fetch(url, {
@@ -64,7 +73,11 @@ async function fetchPage(baseUrl, serviceKey, table, from, to) {
   })
 
   if (!response.ok) {
-    throw new Error(`${table}: HTTP ${response.status} ${await response.text()}`)
+    const body = await response.text()
+    if (body.includes(MISSING_TABLE_CODE)) {
+      throw new MissingTableError(table)
+    }
+    throw new Error(`${table}: HTTP ${response.status} ${body}`)
   }
 
   return response.json()
@@ -134,6 +147,12 @@ async function main() {
       manifest.tablas[table] = rows.length
       console.log(`  ✓ ${table}: ${rows.length} registros`)
     } catch (error) {
+      if (error instanceof MissingTableError) {
+        manifest.tablas[table] = 'NO EXISTE en la base de datos'
+        console.log(`  – ${table}: no existe en la base de datos, nada que respaldar`)
+        continue
+      }
+
       failed = true
       manifest.tablas[table] = `ERROR: ${error.message}`
       console.error(`  ✗ ${table}: ${error.message}`)
