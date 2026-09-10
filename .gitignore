@@ -22,6 +22,9 @@ test-results/
 .env.*.local
 .env
 
+# Respaldos de la base de datos — contienen datos reales de clientes
+backups/
+
 # Editor directories
 .vscode/*
 !.vscode/extensions.json

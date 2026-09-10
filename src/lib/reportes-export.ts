@@ -186,6 +186,13 @@ interface TemplateLookups {
 interface PepLookupRecord {
   pep: string
   nombrePep: string
+  // Escritura exacta del concepto en CatPEP. El archivo entregado conserva el XLOOKUP
+  // vivo con fullCalcOnLoad, y XLOOKUP compara texto exacto: si la columna "Tipo de
+  // Servicio" no coincide carácter por carácter con el catálogo, el PEP se recalcula
+  // vacío y Heineken rechaza el cobro. Heineken publica algunos conceptos con espacios
+  // dobles (p. ej. "FLETE MOV GZ  A GZ - MAQUINA HIELO"), así que el reporte se escribe
+  // con la escritura del catálogo aunque el sistema muestre el nombre normalizado.
+  reportType: string
 }
 
 interface ServiceTypeLookupRecord {
@@ -1533,7 +1540,7 @@ async function loadTemplateLookups(weeklyTemplateBuffer: ArrayBuffer): Promise<T
 
     pepByGzAndType.set(
       `${normalizeLookupKey(gz)}|${normalizeLookupKey(reportType)}`,
-      { pep, nombrePep },
+      { pep, nombrePep, reportType },
     )
   }
 
@@ -1598,6 +1605,7 @@ function resolvePep(lookups: TemplateLookups, gz: string, reportType: string): P
   ) ?? {
     pep: '',
     nombrePep: '',
+    reportType: '',
   }
 }
 
@@ -1706,10 +1714,10 @@ function normalizeReportService(bundle: ServiceEvidenceExportBundle, lookups: Te
     provider,
     gz,
     equipmentType,
-    reportServiceType: reportTypeLookup.reportType,
+    reportServiceType: pepLookup.reportType || reportTypeLookup.reportType,
     pep: pepLookup.pep,
     pepNombre: pepLookup.nombrePep || reportTypeLookup.iniciativa,
-    refaccionesReportType,
+    refaccionesReportType: refaccionesPepLookup.reportType || refaccionesReportType,
     refaccionesPep: refaccionesPepLookup.pep,
     refaccionesPepNombre: refaccionesPepLookup.nombrePep,
     fechaServicioExcel: toExcelDateSerial(fechaServicioSource),
