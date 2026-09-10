@@ -862,6 +862,47 @@ function getColumnStyleId(document: XMLDocument, column: string): number | undef
   return undefined
 }
 
+// Las columnas de importe usan el formato contable de Excel (numFmtId 44), que dibuja
+// "$ 1,234,567.89". Si la columna es más angosta que el texto, Excel muestra "#####" y
+// el taller tendría que ensanchar la columna a mano antes de poder leer o enviar el
+// reporte. Los anchos vienen de la plantilla de Heineken, donde esa columna era el total
+// de una tabla dinámica angosta, así que se recalculan según el importe más grande.
+const CURRENCY_COLUMN_MIN_WIDTH = 14
+const CURRENCY_COLUMN_PADDING = 8
+
+function estimateCurrencyColumnWidth(values: number[]): number {
+  const largest = values.reduce((max, value) => {
+    const absolute = Math.abs(Number(value) || 0)
+    return absolute > max ? absolute : max
+  }, 0)
+
+  const integerDigits = Math.round(largest).toLocaleString('en-US').length
+  return Math.max(CURRENCY_COLUMN_MIN_WIDTH, integerDigits + CURRENCY_COLUMN_PADDING)
+}
+
+/**
+ * Ensancha la columna indicada sin encogerla nunca. `bestFit` se quita porque Excel lo
+ * combina con el ancho almacenado en la plantilla en lugar de medir el contenido nuevo.
+ */
+function widenColumn(document: XMLDocument, column: string, width: number) {
+  const columnNumber = getColumnNumber(column)
+
+  for (const col of getElementsByLocalName(document, 'col')) {
+    const min = Number(col.getAttribute('min'))
+    const max = Number(col.getAttribute('max') ?? col.getAttribute('min'))
+    if (!Number.isFinite(min) || !Number.isFinite(max)) continue
+    if (min > columnNumber || columnNumber > max) continue
+
+    const currentWidth = Number(col.getAttribute('width'))
+    if (Number.isFinite(currentWidth) && currentWidth >= width) return
+
+    col.setAttribute('width', String(width))
+    col.setAttribute('customWidth', '1')
+    col.removeAttribute('bestFit')
+    return
+  }
+}
+
 function replaceConditionalFormattingFormulaText(
   document: XMLDocument,
   previousText: string,
@@ -2020,6 +2061,17 @@ function fillWeeklyRegistroOrdenes(
 
   replaceRowsFrom(sheetData, 2, rows)
   setWorksheetDimension(document, `A1:Q${rows[rows.length - 1]?.getAttribute('r') ?? '2'}`)
+  // N, O y P (Costo Servicio, Refacciones y Total) comparten una sola definición de
+  // columna en la plantilla, así que ensanchar N las cubre a las tres.
+  widenColumn(
+    document,
+    'N',
+    estimateCurrencyColumnWidth(normalizedServices.flatMap((service) => [
+      service.costoServicio,
+      service.costoRefacciones,
+      service.costoServicio + service.costoRefacciones,
+    ])),
+  )
   saveWorksheetDocument(files, sheetPath, document)
   setTableReference(files, 'xl/tables/table1.xml', `A1:Q${Math.max(2, normalizedServices.length + 1)}`)
   setTableColumnName(files, 'xl/tables/table1.xml', 'Fecha Cierre', 'Fecha Servicio')
@@ -2270,6 +2322,11 @@ function fillWeeklyResumenPago(
   setWorksheetAutoFilter(document, `A4:G${4 + dataRowCount}`)
   setWorksheetDataValidationList(document, 'B1', ['(Todas)'])
   setWorksheetDimension(document, `A1:G${totalRowNumber}`)
+  widenColumn(
+    document,
+    'G',
+    estimateCurrencyColumnWidth([...displayRows.map((row) => row.total), runningTotal]),
+  )
   saveWorksheetDocument(files, sheetPath, document)
 }
 

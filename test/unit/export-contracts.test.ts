@@ -365,6 +365,64 @@ describe('report export contracts', () => {
     expect(pepFor('FLETES-TALLER - MOVIMIENTOS')).toBe('M/MXCM/26/CG7L/C2/815/01')
   }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
+  it('widens the currency columns so large totals never render as #####', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // La plantilla de Heineken trae la columna de total del resumen a 8.57 de ancho,
+    // heredado de una tabla dinámica. Con el formato contable un importe de siete cifras
+    // se dibuja como "$ 9,876,543.21" y Excel lo reemplaza por "#####", obligando al
+    // taller a ensanchar la columna antes de poder leer o enviar el reporte.
+    const costoServicio = 9_876_543.21
+    const costoRefaccion = 2_345_678.99
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, [{
+      servicio: buildServicio({
+        id: 70,
+        orden: 9600,
+        aviso: 7600,
+        tipo_servicio: 'MTTO CORRECTIVO RUTA - MAQUINA HIELO',
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        costo_mano_obra: costoServicio,
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 150, servicio_id: 70, aviso: 7600 }),
+      refacciones: [buildServicioRefaccion({
+        nombre_refaccion: 'COMPRESOR',
+        cantidad: 1,
+        precio_unitario: costoRefaccion,
+        subtotal: costoRefaccion,
+      })],
+      evidencias: [],
+    }])
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await readBlobAsArrayBuffer(result.blob))
+
+    // Ancho mínimo que necesita el texto que Excel dibuja, p. ej. "$ 12,222,222.20".
+    const rendered = `$ ${(costoServicio + costoRefaccion).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+    })}`
+
+    const summaryTotalWidth = workbook.getWorksheet('Resumen para pago')?.getColumn('G').width ?? 0
+    const ordersCostWidth = workbook.getWorksheet('Registro Ordenes')?.getColumn('N').width ?? 0
+
+    expect(summaryTotalWidth).toBeGreaterThanOrEqual(rendered.length)
+    expect(ordersCostWidth).toBeGreaterThanOrEqual(rendered.length)
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
   it('expands legacy service types stored without an equipment suffix', async () => {
     const weeklyTemplate = new Uint8Array(
       fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
