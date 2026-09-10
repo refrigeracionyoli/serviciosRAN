@@ -61,6 +61,27 @@ describe('report export contracts', () => {
     }
   })
 
+  it('bumps the template cache version whenever a report template changes', () => {
+    // Cache Storage guarda las plantillas por URL y la URL no cambia entre versiones, así
+    // que si se actualiza una plantilla sin subir TEMPLATE_CACHE_NAME el navegador del
+    // administrador seguiría generando reportes con el catálogo anterior —y saldrían sin
+    // código PEP—. Al cambiar cualquier plantilla esta huella cambia y obliga a subir la
+    // versión y a actualizar este valor en el mismo commit.
+    const fingerprint = require('node:crypto').createHash('sha256')
+    for (const template of [
+      'public/report-templates/formato-semanal-2026.xlsx',
+      'public/report-templates/formato-evidencias-os.xlsx',
+    ]) {
+      fingerprint.update(fs.readFileSync(path.join(root, template)))
+    }
+
+    const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
+    const cacheName = /TEMPLATE_CACHE_NAME = '([^']+)'/.exec(reportes)?.[1]
+
+    expect(`${cacheName} ${fingerprint.digest('hex').slice(0, 16)}`)
+      .toBe('ran-report-templates-v4 7c48b2931f6cf8c9')
+  })
+
   it('keeps export code wired to Supabase, R2 evidence downloads, workers, and browser downloads', () => {
     const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
     const cierres = fs.readFileSync(path.join(root, 'src/lib/cierres-export.ts'), 'utf8')
@@ -70,7 +91,7 @@ describe('report export contracts', () => {
 
     expect(reportes).toContain('WEEKLY_TEMPLATE_URL')
     expect(reportes).toContain('EVIDENCE_TEMPLATE_URL')
-    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v3'")
+    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v4'")
     expect(reportes).toContain('downloadEvidenciaBlob')
     expect(reportes).toContain('originalBlobToEmbeddedImage')
     expect(reportes).toContain('resolveServiceCustomerCode')
@@ -148,7 +169,7 @@ describe('report export contracts', () => {
       const url = String(input)
       requestedUrls.push(url)
 
-      if (url.endsWith('/report-templates/formato-semanal-2026.xlsx')) {
+      if (url.includes('/report-templates/formato-semanal-2026.xlsx')) {
         return new Response(weeklyTemplate, { status: 200 })
       }
 
@@ -248,7 +269,7 @@ describe('report export contracts', () => {
 
     expect(sixBaseRow?.getCell(5).value).toBe('M/MXCM/26/CAF1/C2/515/01')
     expect(sixBaseRow?.getCell(6).value).toBe('DESARROLLO FRIO')
-    expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx'])
+    expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx?v=ran-report-templates-v4'])
   })
 
   it('resolves the 2026 freight concepts to a PEP using the catalog spelling', async () => {
@@ -406,7 +427,7 @@ describe('report export contracts', () => {
       const url = String(input)
       requestedUrls.push(url)
 
-      if (url.endsWith('/report-templates/formato-evidencias-os.xlsx')) {
+      if (url.includes('/report-templates/formato-evidencias-os.xlsx')) {
         return new Response(evidenceTemplate, { status: 200 })
       }
 
@@ -435,7 +456,7 @@ describe('report export contracts', () => {
 
     expect(entryNames).toEqual(['9001_INSTALACION USADA.xlsx'])
     expect(entryNames.some((name) => name.includes('ReporteSemanal.xlsx'))).toBe(false)
-    expect(requestedUrls).toEqual(['/report-templates/formato-evidencias-os.xlsx'])
+    expect(requestedUrls).toEqual(['/report-templates/formato-evidencias-os.xlsx?v=ran-report-templates-v4'])
 
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.load(zipEntries[entryNames[0]])

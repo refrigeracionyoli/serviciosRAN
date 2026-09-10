@@ -29,7 +29,10 @@ const NS = {
 
 const WEEKLY_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-semanal-2026.xlsx`
 const EVIDENCE_TEMPLATE_URL = `${import.meta.env.BASE_URL}report-templates/formato-evidencias-os.xlsx`
-const TEMPLATE_CACHE_NAME = 'ran-report-templates-v3'
+// Se incrementa cada vez que cambia algún archivo de report-templates/. Cache Storage
+// guarda la plantilla por URL y la URL no cambia, así que sin este bump el navegador del
+// administrador seguiría generando reportes con el catálogo anterior.
+const TEMPLATE_CACHE_NAME = 'ran-report-templates-v4'
 const TEMPLATE_FETCH_CACHE = new Map<string, Promise<ArrayBuffer>>()
 const XML_DECODER = new TextDecoder('utf-8')
 const XML_ENCODER = new TextEncoder()
@@ -1407,6 +1410,10 @@ function cloneArrayBuffer(buffer: ArrayBuffer): ArrayBuffer {
   return buffer.slice(0)
 }
 
+function buildVersionedTemplateUrl(url: string): string {
+  return `${url}?v=${TEMPLATE_CACHE_NAME}`
+}
+
 async function fetchTemplateArrayBuffer(url: string): Promise<ArrayBuffer> {
   let persistentCache: Cache | null = null
 
@@ -1422,7 +1429,11 @@ async function fetchTemplateArrayBuffer(url: string): Promise<ArrayBuffer> {
     }
   }
 
-  const response = await fetch(url, { cache: 'force-cache' })
+  // La URL lleva la versión del caché para que subir TEMPLATE_CACHE_NAME también invalide
+  // la copia del caché HTTP del navegador. Con 'force-cache' el navegador entrega la
+  // respuesta guardada aunque esté obsoleta, así que sin este parámetro el bump de Cache
+  // Storage no serviría de nada: la plantilla vieja volvería por la vía HTTP.
+  const response = await fetch(buildVersionedTemplateUrl(url), { cache: 'force-cache' })
   if (!response.ok) {
     throw new Error(`No se pudo cargar la plantilla ${url} (${response.status}).`)
   }

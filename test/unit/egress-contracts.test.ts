@@ -26,7 +26,11 @@ describe('egress reduction contracts', () => {
     expect(reportes).toContain('await caches.open(TEMPLATE_CACHE_NAME)')
     expect(reportes).toContain('persistentCache.match(url)')
     expect(reportes).toContain('persistentCache.put(url, response.clone())')
-    expect(reportes).toContain("fetch(url, { cache: 'force-cache' })")
+    // La plantilla se sigue pidiendo con 'force-cache' para no volver a descargarla, pero
+    // la URL lleva la versión del caché: así un bump de TEMPLATE_CACHE_NAME invalida
+    // también la copia del caché HTTP y no se generan reportes con el catálogo anterior.
+    expect(reportes).toContain("fetch(buildVersionedTemplateUrl(url), { cache: 'force-cache' })")
+    expect(reportes).toContain('`${url}?v=${TEMPLATE_CACHE_NAME}`')
     expect(reportes).toContain('cloneArrayBuffer')
   })
 
