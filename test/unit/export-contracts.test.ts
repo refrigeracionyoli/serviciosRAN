@@ -105,11 +105,7 @@ describe('report export contracts', () => {
     expect(reportes).toContain('removeProtectionArtifactsFromXlsxBytes')
     expect(reportes).toContain('workbookProtection')
     expect(reportes).toContain('sheetProtection')
-    expect(reportes).toContain('setTableColumnName')
     expect(reportes).toContain('getColumnStyleId')
-    expect(reportes).toContain('replaceConditionalFormattingFormulaText')
-    expect(reportes).toContain("'Fecha Cierre', 'Fecha Servicio'")
-    expect(reportes).toContain("'Fecha Servicio'")
     expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY')
     expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY = 1')
     expect(reportes).toContain('EVIDENCE_PHOTO_DOWNLOAD_CONCURRENCY = 2')
@@ -365,6 +361,70 @@ describe('report export contracts', () => {
     expect(pepFor('FLETES-TALLER - MOVIMIENTOS')).toBe('M/MXCM/26/CG7L/C2/815/01')
   }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
+  it('keeps every column name exactly as Heineken publishes it', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // El sistema de Heineken procesa estos archivos identificando las columnas por
+    // nombre, así que cualquier cambio de encabezado —por más razonable que parezca—
+    // rompe su proceso. "Fecha Cierre" lleva la fecha de servicio a propósito (87cb7f9):
+    // el dato cambió, el nombre de la columna no puede cambiar.
+    const heinekenOrderColumns = [
+      'Proveedor', 'GZ', 'Periodo', 'SelGZ', 'Tipo de Servicio', 'PEP', 'Nombre el PEP',
+      'Aviso', 'Orden', 'Cliente', 'Equipo', 'Serie', 'Fecha Cierre', 'Costo Servicio',
+      'Refacciones', 'Total', 'Comentarios',
+    ]
+    const heinekenSparePartColumns = [
+      'SelGZ', 'Orden de Servicio', 'Equipo', 'PEP', 'Nombre PEP', 'Refacción',
+      'Cantidad', 'Precio Unitario', 'Precio Total',
+    ]
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, [{
+      servicio: buildServicio({
+        id: 80,
+        orden: 9700,
+        aviso: 7700,
+        tipo_servicio: 'MTTO CORRECTIVO RUTA - MAQUINA HIELO',
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 160, servicio_id: 80, aviso: 7700 }),
+      refacciones: [],
+      evidencias: [],
+    }])
+
+    const reportBuffer = await readBlobAsArrayBuffer(result.blob)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(reportBuffer)
+
+    const orders = workbook.getWorksheet('Registro Ordenes')
+    const spareParts = workbook.getWorksheet('Registro Refacciones')
+
+    expect(heinekenOrderColumns.map((_, index) => orders?.getRow(1).getCell(index + 1).value))
+      .toEqual(heinekenOrderColumns)
+    expect(heinekenSparePartColumns.map((_, index) => spareParts?.getRow(1).getCell(index + 1).value))
+      .toEqual(heinekenSparePartColumns)
+
+    // Excel también guarda los nombres dentro de la definición de la tabla, y ahí es donde
+    // los leería un proceso automatizado que abra el archivo por API.
+    const ordersTableXml = new TextDecoder().decode(UZIP.parse(reportBuffer)['xl/tables/table1.xml'])
+    for (const columnName of heinekenOrderColumns) {
+      expect(ordersTableXml).toContain(`name="${columnName}"`)
+    }
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
   it('widens the currency columns so large totals never render as #####', async () => {
     const weeklyTemplate = new Uint8Array(
       fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
@@ -593,8 +653,10 @@ describe('report export contracts', () => {
     expect(templateXml).toMatch(/conditionalFormatting[^>]*sqref="M1:M1048576"/)
     expect(templateXml).toContain('<xm:sqref>M1:M1048576</xm:sqref>')
     expect(reportes).toContain("const dateStyleId = getColumnStyleId(document, 'M')")
-    expect(reportes).toContain("replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')")
     expect(reportes).toContain("setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)")
+    // El encabezado conserva el nombre de Heineken aunque el dato sea la fecha de
+    // servicio: su sistema localiza las columnas por nombre.
+    expect(reportes).not.toContain("'Fecha Servicio'")
     expect(reportes).not.toContain('removeConditionalFormattingForColumn(document')
   })
 

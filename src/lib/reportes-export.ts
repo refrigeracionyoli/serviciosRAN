@@ -823,23 +823,6 @@ function setTableReference(files: Record<string, Uint8Array>, tablePath: string,
   files[tablePath] = serializeXml(tableDoc)
 }
 
-function setTableColumnName(
-  files: Record<string, Uint8Array>,
-  tablePath: string,
-  currentName: string,
-  nextName: string,
-) {
-  const tableDoc = parseXml(files[tablePath])
-  const tableRoot = getRootElement(tableDoc)
-  const tableColumn = getElementsByLocalName(tableRoot, 'tableColumn')
-    .find((column) => column.getAttribute('name') === currentName)
-
-  if (tableColumn) {
-    tableColumn.setAttribute('name', nextName)
-    files[tablePath] = serializeXml(tableDoc)
-  }
-}
-
 function getCell(row: Element, column: string): Element | null {
   const reference = `${column}${row.getAttribute('r')}`
   return getDirectChildElementsByLocalName(row, 'c').find((cell) => cell.getAttribute('r') === reference) ?? null
@@ -900,18 +883,6 @@ function widenColumn(document: XMLDocument, column: string, width: number) {
     col.setAttribute('customWidth', '1')
     col.removeAttribute('bestFit')
     return
-  }
-}
-
-function replaceConditionalFormattingFormulaText(
-  document: XMLDocument,
-  previousText: string,
-  nextText: string,
-) {
-  for (const formula of getElementsByLocalName(document, 'formula')) {
-    if (formula.textContent === `"${previousText}"`) {
-      formula.textContent = `"${nextText}"`
-    }
   }
 }
 
@@ -2002,15 +1973,14 @@ function fillWeeklyRegistroOrdenes(
   const sheetPath = 'xl/worksheets/sheet2.xml'
   const document = getWorksheetDocument(files, sheetPath)
   const sheetData = getSheetData(document)
-  const headerRow = getRow(sheetData, 1)
   const templateRow = getRowTemplate(sheetData, 2)
   const dateStyleId = getColumnStyleId(document, 'M')
 
-  if (headerRow) {
-    setInlineString(document, headerRow, 'M', 'Fecha Servicio')
-  }
-  replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')
-
+  // La columna M conserva el nombre "Fecha Cierre" de Heineken. El sistema que procesa
+  // estos archivos del lado de Heineken identifica las columnas por nombre, así que
+  // renombrarla —aunque el dato que se escribe sea la fecha de servicio, según se definió
+  // en 87cb7f9— haría que su proceso no encontrara la columna. El formato condicional de
+  // la plantilla también compara contra ese texto para no dar formato al encabezado.
   const rows = buildClonedRows(
     templateRow,
     Math.max(1, normalizedServices.length),
@@ -2074,7 +2044,6 @@ function fillWeeklyRegistroOrdenes(
   )
   saveWorksheetDocument(files, sheetPath, document)
   setTableReference(files, 'xl/tables/table1.xml', `A1:Q${Math.max(2, normalizedServices.length + 1)}`)
-  setTableColumnName(files, 'xl/tables/table1.xml', 'Fecha Cierre', 'Fecha Servicio')
 }
 
 function fillWeeklyRegistroRefacciones(
