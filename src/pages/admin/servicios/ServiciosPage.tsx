@@ -109,7 +109,9 @@ const BASE_TIPO_SERVICIO_OPTIONS: Array<{ value: TipoServicio; label: string }> 
   { value: 'MTTO PREVENTIVO RUTA - MAQUINA HIELO' as TipoServicio, label: 'MTTO PREVENTIVO RUTA - MAQUINA HIELO' },
   { value: 'INSTALACION - MAQUINA HIELO' as TipoServicio, label: 'INSTALACION - MAQUINA HIELO' },
   { value: 'RETIRO - MAQUINA HIELO' as TipoServicio, label: 'RETIRO - MAQUINA HIELO' },
-  { value: 'FLETE MOV GZ - MAQUINA HIELO' as TipoServicio, label: 'FLETE MOV GZ - MAQUINA HIELO' },
+  { value: 'FLETE MOV GZ A GZ - MAQUINA HIELO' as TipoServicio, label: 'FLETE MOV GZ A GZ - MAQUINA HIELO' },
+  { value: 'FLETE MOV CEDIS A CEDIS - MAQUINA HIELO' as TipoServicio, label: 'FLETE MOV CEDIS A CEDIS - MAQUINA HIELO' },
+  { value: 'FLETES-TALLER - MOVIMIENTOS' as TipoServicio, label: 'FLETES-TALLER - MOVIMIENTOS' },
   { value: 'GARANTIA' as TipoServicio, label: 'GARANTIA' },
 ]
 

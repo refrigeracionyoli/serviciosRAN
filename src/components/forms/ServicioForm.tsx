@@ -144,6 +144,18 @@ function isExcludedLegacyTipoServicio(tipoServicio: string): boolean {
   return EXCLUDED_LEGACY_TIPOS_SERVICIO.has(tipoServicio.trim().toUpperCase())
 }
 
+// Conceptos que Heineken renombró en el catálogo 2026. Los servicios históricos se
+// migran en la base de datos; el nombre anterior se oculta del selector para que nadie
+// vuelva a elegirlo, porque ya no existe en CatPEP y el servicio saldría sin código PEP.
+// "FLETE MOV GZ - MAQUINA HIELO" -> "FLETE MOV GZ A GZ - MAQUINA HIELO"
+const RENAMED_TIPOS_SERVICIO = new Set([
+  'FLETE MOV GZ - MAQUINA HIELO',
+])
+
+function isRenamedTipoServicio(tipoServicio: string): boolean {
+  return RENAMED_TIPOS_SERVICIO.has(tipoServicio.trim().toUpperCase())
+}
+
 function mergeUniqueMaquinas(maquinas: Array<Maquina | null | undefined>): Maquina[] {
   const unique = new Map<number, Maquina>()
 
@@ -190,7 +202,9 @@ const DEFAULT_TIPOS_SERVICIO = [
   'MTTO PREVENTIVO RUTA - MAQUINA HIELO',
   'INSTALACION - MAQUINA HIELO',
   'RETIRO - MAQUINA HIELO',
-  'FLETE MOV GZ - MAQUINA HIELO',
+  'FLETE MOV GZ A GZ - MAQUINA HIELO',
+  'FLETE MOV CEDIS A CEDIS - MAQUINA HIELO',
+  'FLETES-TALLER - MOVIMIENTOS',
 ]
 
 const DEFAULT_CLASES_ORDEN = ['ZSM1', 'ZSI2']
@@ -521,6 +535,7 @@ export function ServicioForm({
     .filter((tipo) => {
       if (!tipo) return false
       if (tipo === tipoServicioValue.trim()) return true
+      if (isRenamedTipoServicio(tipo)) return false
       if (isTipoServicioMaquinaHielo(tipo)) return true
       return !isExcludedLegacyTipoServicio(tipo)
     })

@@ -9,6 +9,12 @@ import { buildCierre, buildMaquina, buildServicio, buildServicioRefaccion } from
 
 const root = process.cwd()
 
+// Estas pruebas descomprimen y reescriben la plantilla semanal completa (917 conceptos en
+// CatPEP). Tardan bastante más que el límite de 5 s de vitest, y en CI corren además con
+// instrumentación de cobertura, así que llevan su propio límite en vez de aflojar el
+// global —que ocultaría cuelgues reales en el resto de la suite—.
+const HEAVY_WORKBOOK_TIMEOUT_MS = 60_000
+
 function readBlobAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -61,6 +67,27 @@ describe('report export contracts', () => {
     }
   })
 
+  it('bumps the template cache version whenever a report template changes', () => {
+    // Cache Storage guarda las plantillas por URL y la URL no cambia entre versiones, así
+    // que si se actualiza una plantilla sin subir TEMPLATE_CACHE_NAME el navegador del
+    // administrador seguiría generando reportes con el catálogo anterior —y saldrían sin
+    // código PEP—. Al cambiar cualquier plantilla esta huella cambia y obliga a subir la
+    // versión y a actualizar este valor en el mismo commit.
+    const fingerprint = require('node:crypto').createHash('sha256')
+    for (const template of [
+      'public/report-templates/formato-semanal-2026.xlsx',
+      'public/report-templates/formato-evidencias-os.xlsx',
+    ]) {
+      fingerprint.update(fs.readFileSync(path.join(root, template)))
+    }
+
+    const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
+    const cacheName = /TEMPLATE_CACHE_NAME = '([^']+)'/.exec(reportes)?.[1]
+
+    expect(`${cacheName} ${fingerprint.digest('hex').slice(0, 16)}`)
+      .toBe('ran-report-templates-v4 7c48b2931f6cf8c9')
+  })
+
   it('keeps export code wired to Supabase, R2 evidence downloads, workers, and browser downloads', () => {
     const reportes = fs.readFileSync(path.join(root, 'src/lib/reportes-export.ts'), 'utf8')
     const cierres = fs.readFileSync(path.join(root, 'src/lib/cierres-export.ts'), 'utf8')
@@ -70,7 +97,7 @@ describe('report export contracts', () => {
 
     expect(reportes).toContain('WEEKLY_TEMPLATE_URL')
     expect(reportes).toContain('EVIDENCE_TEMPLATE_URL')
-    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v3'")
+    expect(reportes).toContain("TEMPLATE_CACHE_NAME = 'ran-report-templates-v4'")
     expect(reportes).toContain('downloadEvidenciaBlob')
     expect(reportes).toContain('originalBlobToEmbeddedImage')
     expect(reportes).toContain('resolveServiceCustomerCode')
@@ -78,11 +105,7 @@ describe('report export contracts', () => {
     expect(reportes).toContain('removeProtectionArtifactsFromXlsxBytes')
     expect(reportes).toContain('workbookProtection')
     expect(reportes).toContain('sheetProtection')
-    expect(reportes).toContain('setTableColumnName')
     expect(reportes).toContain('getColumnStyleId')
-    expect(reportes).toContain('replaceConditionalFormattingFormulaText')
-    expect(reportes).toContain("'Fecha Cierre', 'Fecha Servicio'")
-    expect(reportes).toContain("'Fecha Servicio'")
     expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY')
     expect(reportes).toContain('WEEKLY_EVIDENCE_WORKBOOK_CONCURRENCY = 1')
     expect(reportes).toContain('EVIDENCE_PHOTO_DOWNLOAD_CONCURRENCY = 2')
@@ -148,7 +171,7 @@ describe('report export contracts', () => {
       const url = String(input)
       requestedUrls.push(url)
 
-      if (url.endsWith('/report-templates/formato-semanal-2026.xlsx')) {
+      if (url.includes('/report-templates/formato-semanal-2026.xlsx')) {
         return new Response(weeklyTemplate, { status: 200 })
       }
 
@@ -238,7 +261,7 @@ describe('report export contracts', () => {
     expect(spareParts?.getCell('G2').value).toBe(2)
     expect(spareParts?.getCell('H2').value).toBe(125)
     expect(spareParts?.getCell('I2').value).toMatchObject({ result: 250 })
-    expect(workbook.getWorksheet('CatPEP')?.rowCount).toBe(776)
+    expect(workbook.getWorksheet('CatPEP')?.rowCount).toBe(917)
 
     const paymentSummary = workbook.getWorksheet('Resumen para pago')
     const sixBaseRow = paymentSummary
@@ -248,8 +271,330 @@ describe('report export contracts', () => {
 
     expect(sixBaseRow?.getCell(5).value).toBe('M/MXCM/26/CAF1/C2/515/01')
     expect(sixBaseRow?.getCell(6).value).toBe('DESARROLLO FRIO')
-    expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx'])
-  })
+    expect(requestedUrls).toEqual(['/report-templates/formato-semanal-2026.xlsx?v=ran-report-templates-v4'])
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
+  it('resolves the 2026 freight concepts to a PEP using the catalog spelling', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // Heineken publica el concepto de máquina de hielo con espacio doble
+    // ("FLETE MOV GZ  A GZ") mientras que el resto de los equipos usan uno solo.
+    // El sistema guarda el nombre normalizado, así que el export tiene que escribir
+    // la variante del catálogo: el archivo entregado conserva el XLOOKUP vivo y una
+    // diferencia de un espacio deja la columna PEP vacía y el cobro se rechaza.
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, [
+      {
+        servicio: buildServicio({
+          id: 41,
+          orden: 9101,
+          aviso: 7101,
+          tipo_servicio: 'FLETE MOV GZ A GZ - MAQUINA HIELO',
+          status: 'completado',
+          fecha_cierre: '2026-07-08',
+          maquina: buildMaquina({ modelo: 'KM901' }),
+        }),
+        cierre: buildCierre({ id: 121, servicio_id: 41, aviso: 7101 }),
+        refacciones: [],
+        evidencias: [],
+      },
+      {
+        servicio: buildServicio({
+          id: 42,
+          orden: 9102,
+          aviso: 7102,
+          tipo_servicio: 'FLETE MOV CEDIS A CEDIS - MAQUINA HIELO',
+          status: 'completado',
+          fecha_cierre: '2026-07-08',
+          maquina: buildMaquina({ modelo: 'KM901' }),
+        }),
+        cierre: buildCierre({ id: 122, servicio_id: 42, aviso: 7102 }),
+        refacciones: [],
+        evidencias: [],
+      },
+      {
+        servicio: buildServicio({
+          id: 43,
+          orden: 9103,
+          aviso: 7103,
+          tipo_servicio: 'FLETES-TALLER - MOVIMIENTOS',
+          status: 'completado',
+          fecha_cierre: '2026-07-08',
+          maquina: buildMaquina({ modelo: 'KM901' }),
+        }),
+        cierre: buildCierre({ id: 123, servicio_id: 43, aviso: 7103 }),
+        refacciones: [],
+        evidencias: [],
+      },
+    ])
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await readBlobAsArrayBuffer(result.blob))
+    const orders = workbook.getWorksheet('Registro Ordenes')
+
+    expect(orders?.getCell('E2').value).toBe('FLETE MOV GZ  A GZ - MAQUINA HIELO')
+    expect(orders?.getCell('E3').value).toBe('FLETE MOV CEDIS A CEDIS - MAQUINA HIELO')
+    expect(orders?.getCell('E4').value).toBe('FLETES-TALLER - MOVIMIENTOS')
+
+    const paymentSummary = workbook.getWorksheet('Resumen para pago')
+    const summaryRows = paymentSummary
+      ? Array.from({ length: paymentSummary.rowCount }, (_, index) => paymentSummary.getRow(index + 1))
+      : []
+
+    const pepFor = (tipoServicio: string) => summaryRows
+      .find((row) => row.getCell(4).value === tipoServicio)
+      ?.getCell(5).value
+
+    expect(pepFor('FLETE MOV GZ  A GZ - MAQUINA HIELO')).toBe('M/MXCM/26/GA6B/C6/815/03')
+    expect(pepFor('FLETE MOV CEDIS A CEDIS - MAQUINA HIELO')).toBe('M/MXCM/26/GA6B/C6/815/03')
+    expect(pepFor('FLETES-TALLER - MOVIMIENTOS')).toBe('M/MXCM/26/CG7L/C2/815/01')
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
+  it('keeps every column name exactly as Heineken publishes it', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // El sistema de Heineken procesa estos archivos identificando las columnas por
+    // nombre, así que cualquier cambio de encabezado —por más razonable que parezca—
+    // rompe su proceso. "Fecha Cierre" lleva la fecha de servicio a propósito (87cb7f9):
+    // el dato cambió, el nombre de la columna no puede cambiar.
+    const heinekenOrderColumns = [
+      'Proveedor', 'GZ', 'Periodo', 'SelGZ', 'Tipo de Servicio', 'PEP', 'Nombre el PEP',
+      'Aviso', 'Orden', 'Cliente', 'Equipo', 'Serie', 'Fecha Cierre', 'Costo Servicio',
+      'Refacciones', 'Total', 'Comentarios',
+    ]
+    const heinekenSparePartColumns = [
+      'SelGZ', 'Orden de Servicio', 'Equipo', 'PEP', 'Nombre PEP', 'Refacción',
+      'Cantidad', 'Precio Unitario', 'Precio Total',
+    ]
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, [{
+      servicio: buildServicio({
+        id: 80,
+        orden: 9700,
+        aviso: 7700,
+        tipo_servicio: 'MTTO CORRECTIVO RUTA - MAQUINA HIELO',
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 160, servicio_id: 80, aviso: 7700 }),
+      refacciones: [],
+      evidencias: [],
+    }])
+
+    const reportBuffer = await readBlobAsArrayBuffer(result.blob)
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(reportBuffer)
+
+    const orders = workbook.getWorksheet('Registro Ordenes')
+    const spareParts = workbook.getWorksheet('Registro Refacciones')
+
+    expect(heinekenOrderColumns.map((_, index) => orders?.getRow(1).getCell(index + 1).value))
+      .toEqual(heinekenOrderColumns)
+    expect(heinekenSparePartColumns.map((_, index) => spareParts?.getRow(1).getCell(index + 1).value))
+      .toEqual(heinekenSparePartColumns)
+
+    // Excel también guarda los nombres dentro de la definición de la tabla, y ahí es donde
+    // los leería un proceso automatizado que abra el archivo por API.
+    const ordersTableXml = new TextDecoder().decode(UZIP.parse(reportBuffer)['xl/tables/table1.xml'])
+    for (const columnName of heinekenOrderColumns) {
+      expect(ordersTableXml).toContain(`name="${columnName}"`)
+    }
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
+  it('widens the currency columns so large totals never render as #####', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // La plantilla de Heineken trae la columna de total del resumen a 8.57 de ancho,
+    // heredado de una tabla dinámica. Con el formato contable un importe de siete cifras
+    // se dibuja como "$ 9,876,543.21" y Excel lo reemplaza por "#####", obligando al
+    // taller a ensanchar la columna antes de poder leer o enviar el reporte.
+    const costoServicio = 9_876_543.21
+    const costoRefaccion = 2_345_678.99
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, [{
+      servicio: buildServicio({
+        id: 70,
+        orden: 9600,
+        aviso: 7600,
+        tipo_servicio: 'MTTO CORRECTIVO RUTA - MAQUINA HIELO',
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        costo_mano_obra: costoServicio,
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 150, servicio_id: 70, aviso: 7600 }),
+      refacciones: [buildServicioRefaccion({
+        nombre_refaccion: 'COMPRESOR',
+        cantidad: 1,
+        precio_unitario: costoRefaccion,
+        subtotal: costoRefaccion,
+      })],
+      evidencias: [],
+    }])
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await readBlobAsArrayBuffer(result.blob))
+
+    // Ancho mínimo que necesita el texto que Excel dibuja, p. ej. "$ 12,222,222.20".
+    const rendered = `$ ${(costoServicio + costoRefaccion).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+    })}`
+
+    const summaryTotalWidth = workbook.getWorksheet('Resumen para pago')?.getColumn('G').width ?? 0
+    const ordersCostWidth = workbook.getWorksheet('Registro Ordenes')?.getColumn('N').width ?? 0
+
+    expect(summaryTotalWidth).toBeGreaterThanOrEqual(rendered.length)
+    expect(ordersCostWidth).toBeGreaterThanOrEqual(rendered.length)
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
+  it('expands legacy service types stored without an equipment suffix', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // Buena parte del histórico se capturó sin el sufijo de equipo ("INSTALACION" en vez
+    // de "INSTALACION - MAQUINA HIELO"). Esos registros se resuelven por la hoja Sheet2 de
+    // la plantilla, un camino distinto al de los nombres completos, y dependen de que
+    // exceljs pueda leer el valor en caché de una fórmula. Si Sheet2 dejara de traer ese
+    // valor, estos servicios saldrían sin código PEP y sin fallar de forma visible.
+    const legacyTypes: Array<[string, string, string]> = [
+      ['INSTALACION', 'INSTALACION - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/01'],
+      ['RETIRO', 'RETIRO - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/01'],
+    ]
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, legacyTypes.map(([tipoServicio], index) => ({
+      servicio: buildServicio({
+        id: 60 + index,
+        orden: 9400 + index,
+        aviso: 7400 + index,
+        tipo_servicio: tipoServicio,
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 140 + index, servicio_id: 60 + index, aviso: 7400 + index }),
+      refacciones: [],
+      evidencias: [],
+    })))
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await readBlobAsArrayBuffer(result.blob))
+    const orders = workbook.getWorksheet('Registro Ordenes')
+    const paymentSummary = workbook.getWorksheet('Resumen para pago')
+    const summaryRows = paymentSummary
+      ? Array.from({ length: paymentSummary.rowCount }, (_, index) => paymentSummary.getRow(index + 1))
+      : []
+
+    legacyTypes.forEach(([, expandedType, pep], index) => {
+      expect(orders?.getCell(`E${index + 2}`).value).toBe(expandedType)
+      expect(summaryRows.find((row) => row.getCell(4).value === expandedType)?.getCell(5).value)
+        .toBe(pep)
+    })
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
+
+  it('keeps the PEP of every pre-2026 concept unchanged after the catalog update', async () => {
+    const weeklyTemplate = new Uint8Array(
+      fs.readFileSync(path.join(root, 'public/report-templates/formato-semanal-2026.xlsx')),
+    )
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+      new Response(weeklyTemplate, { status: 200 })
+    ))
+
+    // Códigos verificados contra la plantilla anterior al catálogo 2026, concepto por
+    // concepto. Si alguno cambia, un reporte de una semana ya cobrada dejaría de
+    // coincidir con lo que Heineken tiene registrado.
+    const expectedPeps: Array<[string, string, string]> = [
+      ['MTTO CORRECTIVO RUTA - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/04', 'MTTO MAQUINA HIELO'],
+      ['MTTO CORRECTIVO PISO - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/04', 'MTTO MAQUINA HIELO'],
+      ['MTTO PREVENTIVO RUTA - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/04', 'MTTO MAQUINA HIELO'],
+      ['INSTALACION - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/01', 'MOVIMIENTOS'],
+      ['RETIRO - MAQUINA HIELO', 'M/MXCM/26/CG7L/C2/815/01', 'MOVIMIENTOS'],
+    ]
+
+    const result = await buildWeeklyReportBundleFromBundles({
+      semana: 'S2826',
+      fechaInicio: '2026-07-06',
+      fechaFin: '2026-07-11',
+      reportMode: 'todos',
+      contentMode: 'solo_reporte',
+    }, expectedPeps.map(([tipoServicio], index) => ({
+      servicio: buildServicio({
+        id: 50 + index,
+        orden: 9300 + index,
+        aviso: 7300 + index,
+        tipo_servicio: tipoServicio,
+        status: 'completado',
+        fecha_cierre: '2026-07-08',
+        maquina: buildMaquina({ modelo: 'KM901' }),
+      }),
+      cierre: buildCierre({ id: 130 + index, servicio_id: 50 + index, aviso: 7300 + index }),
+      refacciones: [],
+      evidencias: [],
+    })))
+
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.load(await readBlobAsArrayBuffer(result.blob))
+    const orders = workbook.getWorksheet('Registro Ordenes')
+    const paymentSummary = workbook.getWorksheet('Resumen para pago')
+    const summaryRows = paymentSummary
+      ? Array.from({ length: paymentSummary.rowCount }, (_, index) => paymentSummary.getRow(index + 1))
+      : []
+
+    expectedPeps.forEach(([tipoServicio, pep, nombrePep], index) => {
+      expect(orders?.getCell(`E${index + 2}`).value).toBe(tipoServicio)
+
+      const summaryRow = summaryRows.find((row) => row.getCell(4).value === tipoServicio)
+      expect(summaryRow?.getCell(5).value).toBe(pep)
+      expect(summaryRow?.getCell(6).value).toBe(nombrePep)
+    })
+  }, HEAVY_WORKBOOK_TIMEOUT_MS)
 
   it('builds evidence-only ZIPs without loading or generating the weekly workbook', async () => {
     const evidenceTemplate = new Uint8Array(
@@ -261,7 +606,7 @@ describe('report export contracts', () => {
       const url = String(input)
       requestedUrls.push(url)
 
-      if (url.endsWith('/report-templates/formato-evidencias-os.xlsx')) {
+      if (url.includes('/report-templates/formato-evidencias-os.xlsx')) {
         return new Response(evidenceTemplate, { status: 200 })
       }
 
@@ -290,7 +635,7 @@ describe('report export contracts', () => {
 
     expect(entryNames).toEqual(['9001_INSTALACION USADA.xlsx'])
     expect(entryNames.some((name) => name.includes('ReporteSemanal.xlsx'))).toBe(false)
-    expect(requestedUrls).toEqual(['/report-templates/formato-evidencias-os.xlsx'])
+    expect(requestedUrls).toEqual(['/report-templates/formato-evidencias-os.xlsx?v=ran-report-templates-v4'])
 
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.load(zipEntries[entryNames[0]])
@@ -308,8 +653,10 @@ describe('report export contracts', () => {
     expect(templateXml).toMatch(/conditionalFormatting[^>]*sqref="M1:M1048576"/)
     expect(templateXml).toContain('<xm:sqref>M1:M1048576</xm:sqref>')
     expect(reportes).toContain("const dateStyleId = getColumnStyleId(document, 'M')")
-    expect(reportes).toContain("replaceConditionalFormattingFormulaText(document, 'Fecha Cierre', 'Fecha Servicio')")
     expect(reportes).toContain("setNumber(document, row, 'M', data.fechaServicioExcel, dateStyleId)")
+    // El encabezado conserva el nombre de Heineken aunque el dato sea la fecha de
+    // servicio: su sistema localiza las columnas por nombre.
+    expect(reportes).not.toContain("'Fecha Servicio'")
     expect(reportes).not.toContain('removeConditionalFormattingForColumn(document')
   })
 

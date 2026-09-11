@@ -70,6 +70,57 @@ const allowedVulnerabilities = {
     ]),
     reason: 'Parent package for allowed build-time findings in the PWA build toolchain.',
   },
+  vitest: {
+    advisories: new Set([
+      '@vitest/mocker',
+      'vitest',
+      'GHSA-82fw-gwwq-j7x9',
+    ]),
+    reason: 'GHSA-82fw-gwwq-j7x9 (path traversal via el redirect mock de @vitest/mocker) sólo afecta al corredor de pruebas: es devDependency y no se empaqueta en la app. Explotarlo requiere ejecutar código de prueba no confiable en la máquina de desarrollo. El parche exige subir vitest de 3.x a 4.1.11+, un salto mayor que se atiende por separado.',
+  },
+  '@vitest/mocker': {
+    advisories: new Set([
+      '@vitest/mocker',
+      'vitest',
+      'GHSA-82fw-gwwq-j7x9',
+    ]),
+    reason: 'Paquete afectado por el hallazgo permitido de vitest; misma justificación.',
+  },
+  '@vitest/coverage-v8': {
+    advisories: new Set([
+      '@vitest/mocker',
+      'vitest',
+      'GHSA-82fw-gwwq-j7x9',
+    ]),
+    reason: 'Paquete padre del hallazgo permitido de vitest; misma justificación.',
+  },
+  'react-router': {
+    advisories: new Set([
+      'react-router',
+      'GHSA-wrjc-x8rr-h8h6',
+      'GHSA-337j-9hxr-rhxg',
+    ]),
+    // Verificado en el código, no asumido:
+    // - GHSA-337j-9hxr-rhxg (deserializeErrors en hidratación SSR) no aplica: la app es
+    //   SPA de cliente —main.tsx usa createRoot y router.tsx createBrowserRouter—, no hay
+    //   SSR ni hidratación en ninguna parte del proyecto.
+    // - GHSA-wrjc-x8rr-h8h6 (open redirect por backslash) exige que el destino de
+    //   navegación lo controle un tercero; todos los navigate() y <Link> del proyecto
+    //   apuntan a rutas internas fijas con un id numérico interpolado.
+    // El parche sólo existe en react-router 7.18.0: subir de 6.x a 7.x es una migración
+    // mayor del enrutador y se atiende por separado.
+    reason: 'Advertencias de react-router sin ruta de explotación en esta app: no hay SSR (createRoot + createBrowserRouter) y ningún destino de navegación proviene de entrada externa. El parche exige migrar de react-router 6.x a 7.x, que se atiende por separado.',
+  },
+  'react-router-dom': {
+    advisories: new Set([
+      'react-router',
+      'react-router-dom',
+      'GHSA-wrjc-x8rr-h8h6',
+      'GHSA-337j-9hxr-rhxg',
+      'GHSA-jjmj-jmhj-qwj2',
+    ]),
+    reason: 'Paquete padre de los hallazgos permitidos de react-router; misma justificación.',
+  },
 }
 
 function severityRank(severity) {
