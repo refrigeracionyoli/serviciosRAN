@@ -77,6 +77,7 @@ export async function exportServiciosExcel({
     'Clase orden': servicio.clase_orden ?? '',
     'Codigo cliente': servicio.cliente?.codigo_cliente ?? '',
     Cliente: servicio.cliente?.nombre ?? '',
+    'Num. serie': servicio.maquina?.serie ?? '',
     Tecnico: servicio.tecnico?.nombre ?? '',
     'Costo mano de obra': servicio.costo_mano_obra ?? 0,
     Refacciones: servicio.costo_refacciones ?? 0,
@@ -94,6 +95,7 @@ export async function exportServiciosExcel({
     'Clase orden': '',
     'Codigo cliente': '',
     Cliente: '',
+    'Num. serie': '',
     Tecnico: '',
     'Costo mano de obra': '',
     Refacciones: '',
@@ -114,6 +116,7 @@ export async function exportServiciosExcel({
     { width: 14 },
     { width: 14 },
     { width: 34 },
+    { width: 20 },
     { width: 24 },
     { width: 20 },
     { width: 18 },
@@ -125,7 +128,7 @@ export async function exportServiciosExcel({
   worksheet.getRow(5).alignment = { vertical: 'middle' }
   worksheet.autoFilter = {
     from: 'A5',
-    to: `M${Math.max(5, serviceRows.length + 5)}`,
+    to: `N${Math.max(5, serviceRows.length + 5)}`,
   }
 
   const buffer = await workbook.xlsx.writeBuffer()
